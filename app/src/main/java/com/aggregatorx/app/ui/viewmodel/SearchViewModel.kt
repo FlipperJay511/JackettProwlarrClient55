@@ -55,6 +55,7 @@ class SearchViewModel @Inject constructor(
     val isDiscoveryPaused: StateFlow<Boolean> = _isDiscoveryPaused.asStateFlow()
 
     private val _providerPages = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val providerPages: StateFlow<Map<String, Int>> = _providerPages.asStateFlow()
 
     // ── MISSION CONTROL: Session Tracking ───────────────────────────────
     private val sessionSeenUrls = mutableSetOf<String>()
@@ -196,6 +197,18 @@ class SearchViewModel @Inject constructor(
         search(isLoadMore = true)
     }
 
+    fun prevProviderPage(providerId: String) {
+        _providerPages.update { pages ->
+            val current = pages[providerId] ?: 0
+            if (current > 0) pages + (providerId to current - 1) else pages
+        }
+        search(isLoadMore = true)
+    }
+
+    fun refreshProvider(providerId: String) {
+        search(isLoadMore = false)
+    }
+
     fun panicRefresh() {
         currentSearchJob?.cancel()
         search(isLoadMore = false)
@@ -229,6 +242,22 @@ class SearchViewModel @Inject constructor(
         sessionSeenUrls.clear()
         videoPreviewCache.clear()
         lastSearchQuery = ""
+    }
+
+    fun clearSearchHistory() {
+        viewModelScope.launch {
+            repository.clearSearchHistory()
+            _uiState.update { it.copy(recentSearches = emptyList()) }
+        }
+    }
+
+    fun clearError() {
+        _uiState.update { it.copy(error = null) }
+    }
+
+    fun searchFromHistory(query: String) {
+        _uiState.update { it.copy(query = query) }
+        search(isLoadMore = false)
     }
 
     // ── VIDEO EXTRACTION CHAIN ──────────────────────────────────────────
