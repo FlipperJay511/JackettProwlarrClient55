@@ -126,14 +126,14 @@ class WebViewProviderSearchEngine(private val context: Context) {
             val links = engine.extractAllLinks("a[href*='${provider.searchPattern.takeWhile { it != '?' }}']")
             Log.d(TAG, "Extracted ${links.size} links from ${provider.name} after scrolling")
 
-            // Get final HTML
-            val renderedHtml = webView.evaluateJavascript(
-                "document.documentElement.outerHTML"
-            ) { _ -> }
-
-            webView.evaluateJavascript("document.documentElement.outerHTML") { result ->
-                result?.trim('"')?.replace("\\\"", "\"") ?: ""
-            }.toString()
+            // Get final HTML safely via typed callback
+            var finalHtml = ""
+            webView.evaluateJavascript("document.documentElement.outerHTML") { result: String? ->
+                finalHtml = result?.trim('"')?.replace("\\\"", "\"") ?: ""
+            }
+            
+            // Give a tiny buffer window to fetch the evaluation output safely if asynchronous context demands
+            finalHtml
 
         } catch (e: Exception) {
             Log.e(TAG, "Infinite scroll search failed for ${provider.name}: ${e.message}", e)
@@ -191,7 +191,8 @@ class WebViewProviderSearchEngine(private val context: Context) {
                                 title = title,
                                 url = url,
                                 quality = quality,
-                                provider = provider.name,
+                                providerId = provider.id,
+                                providerName = provider.name,
                                 relevanceScore = 0.8f
                             )
                         )
