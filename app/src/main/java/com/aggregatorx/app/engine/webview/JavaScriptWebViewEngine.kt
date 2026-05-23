@@ -6,6 +6,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import java.util.concurrent.CompletableFuture
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.serialization.json.Json
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -145,7 +146,7 @@ class JavaScriptWebViewEngine(private val webView: WebView) {
                 webView.evaluateJavascript(
                     "(function() { return document.querySelectorAll('$resultSelector').length > 0; })();"
                 ) { result ->
-                    val found = result?.toBoolean() ?: false
+                    val found = result?.contains("true") ?: false
                     if (found || (System.currentTimeMillis() - startTime) >= (timeoutMs - 1000)) {
                         webView.evaluateJavascript("document.documentElement.outerHTML") { finalHtml ->
                             val html = finalHtml?.trim('"')?.replace("\\\"", "\"") ?: ""
@@ -175,7 +176,7 @@ class JavaScriptWebViewEngine(private val webView: WebView) {
             ) { result ->
                 try {
                     val json = result?.trim('"')?.replace("\\\"", "\"") ?: "[]"
-                    val links = kotlinx.serialization.json.Json.decodeFromString<List<String>>(json)
+                    val links = Json.decodeFromString<List<String>>(json)
                     continuation.resume(links)
                 } catch (e: Exception) {
                     continuation.resume(emptyList())
