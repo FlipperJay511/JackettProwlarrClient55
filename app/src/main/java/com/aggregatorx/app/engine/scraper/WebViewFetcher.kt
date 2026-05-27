@@ -1,12 +1,16 @@
 package com.aggregatorx.app.engine.scraper
 
+import android.content.Context
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebSettings
 import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicReference
+import javax.inject.Inject
 
-object WebViewFetcher {
+class WebViewFetcher @Inject constructor(
+    private val context: Context
+) {
 
     private val webViewInstance = AtomicReference<WebView?>(null)
 
@@ -17,7 +21,7 @@ object WebViewFetcher {
     ): String? = withContext(Dispatchers.Main) {
         var webView: WebView? = null
         return@withContext try {
-            webView = WebView(android.app.ActivityThread.currentApplication())
+            webView = WebView(context)
             
             webView.settings.apply {
                 javaScriptEnabled = true
