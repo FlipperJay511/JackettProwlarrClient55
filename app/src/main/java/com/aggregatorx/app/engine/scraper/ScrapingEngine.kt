@@ -18,7 +18,6 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import com.aggregatorx.app.engine.util.EngineUtils
 import java.net.URLEncoder
-// WebViewFetcher is in the same package — no import needed
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -49,7 +48,8 @@ class ScrapingEngine @Inject constructor(
     private val aiDecisionEngine: AIDecisionEngine,
     private val cloudflareBypassEngine: CloudflareBypassEngine,
     private val endpointDiscoveryEngine: EndpointDiscoveryEngine,
-    private val nlpProcessor: NaturalLanguageQueryProcessor
+    private val nlpProcessor: NaturalLanguageQueryProcessor,
+    private val webViewFetcher: WebViewFetcher
 ) {
     @Volatile private var currentProcessedQuery: ProcessedQuery? = null
     private val providerHealthMap = ConcurrentHashMap<String, ProviderHealth>()
@@ -91,7 +91,7 @@ class ScrapingEngine @Inject constructor(
         )
     }
 
-    // ── Cache ─────────────────────────────────────────────────────────────────
+    // ── Cache ──────────────────────────────────────────────────────────────
 
     private data class CacheEntry(
         val results: List<ProviderSearchResults>,
@@ -105,7 +105,7 @@ class ScrapingEngine @Inject constructor(
     var cacheResults: Boolean = true
     fun clearCache() { synchronized(resultCache) { resultCache.clear() } }
 
-    // ── Public API ─────────────────────────────────────────────────────────────
+    // ── Public API ────────────────────────────────────────────────────────
 
     /**
      * Search all enabled providers concurrently.
@@ -330,7 +330,7 @@ class ScrapingEngine @Inject constructor(
         try {
             val searchUrl = smartNavigationEngine.findSearchUrl(provider.baseUrl, effectiveQuery)
                 ?: buildFallbackSearchUrl(provider, effectiveQuery, 0)
-            val html = WebViewFetcher.fetch(searchUrl, effectiveQuery, timeoutMs = 18_000L)
+            val html = webViewFetcher.fetch(searchUrl, effectiveQuery, timeoutMs = 18_000L)
             if (html.isNullOrBlank()) return@withContext emptyList()
             val doc = Jsoup.parse(html, provider.baseUrl)
             extractResultsWithThumbnails(doc, provider, originalQuery)
@@ -389,7 +389,7 @@ class ScrapingEngine @Inject constructor(
         else null
     }
 
-    // ── Fallback ─────────────────────────────────────────────────────────────
+    // ── Fallback ─────────────────────────────────────────────────────────
 
     private suspend fun tryFallbackScraping(
         provider: Provider,
@@ -521,15 +521,15 @@ class ScrapingEngine @Inject constructor(
             val titleLower = result.title.lowercase()
             val urlLower   = result.url.lowercase()
 
-            // ════════════════════════════════════════════════════════════════════
+            // ════════════════════════════════════════════════════════════
             // BLOCK 1: HARD CATALOG PATTERNS — Always remove these
-            // ════════════════════════════════════════════════════════════════════
+            // ════════════════════════════════════════════════════════════
             if (result.title.length < 3) return@filter false
             if (HARD_CATEGORY_URL_PATTERNS.any { urlLower.contains(it) }) return@filter false
 
-            // ════════════════════════════════════════════════════════════════════
+            // ════════════════════════════════════════════════════════════
             // BLOCK 2: SOFT CATEGORY TITLES — Only block if NO metadata
-            // ════════════════════════════════════════════════════════════════════
+            // ════════════════════════════════════════════════════════════
             // If title is a genre/category name BUT has description/thumbnail, keep it
             // (it's a real content page like "Best Action Movies" or has metadata)
             if (titleLower.trim() in SUSPICIOUS_CATEGORY_NAMES) {
@@ -541,9 +541,9 @@ class ScrapingEngine @Inject constructor(
                 // Has metadata → it's a real result, keep it
             }
 
-            // ════════════════════════════════════════════════════════════════════
+            // ════════════════════════════════════════════════════════════
             // BLOCK 3: QUERY RELEVANCE — MUST pass at least one relevance check
-            // ════════════════════════════════════════════════════════════════════
+            // ════════════════════════════════════════════════════════════
             val combined      = "$titleLower ${result.description?.lowercase() ?: ""} $urlLower"
             val hasKeyword    = queryWords.any { combined.contains(it) }
             val hasConcept    = processed?.conceptTerms?.any { combined.contains(it) } ?: false
@@ -633,7 +633,7 @@ class ScrapingEngine @Inject constructor(
         }
     }
 
-    // ── Utilities ──────────────────────────────────────────────────────────────
+    // ── Utilities ─────────────────────────────────────────────────────────
 
     private suspend fun enforceRateLimit(providerId: String) {
         val last = lastRequestTime[providerId] ?: 0L
