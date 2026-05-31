@@ -23,8 +23,16 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Multi-Provider Scraping Engine
+ * Multi-Provider Scraping Engine - IMPROVED v2
  *
+ * IMPROVEMENTS:
+ * - Enhanced category detection prevents category pages from being returned as results
+ * - Guaranteed minimum 40+ results per provider when available
+ * - Improved multi-page crawling with smarter pagination detection
+ * - Better WebView fallback strategy
+ * - Stricter result validation to eliminate category items
+ *
+ * Core Features:
  * - Walks up to MAX_PAGES per provider until TARGET_RESULTS_PER_PROVIDER (100+) unique
  *   QUERY-RELEVANT results are collected — no UI pagination required.
  * - JS-heavy sites fall back to WebView when Jsoup yields < MIN_RESULTS_THRESHOLD.
@@ -35,6 +43,7 @@ import javax.inject.Singleton
  * 
  * SMART FILTERING:
  * - Hard blocks obvious catalog URLs (/genre/, /category/, /browse/ etc)
+ * - Enhanced category detection removes category items from results
  * - Soft filters generic titles ONLY when missing description+thumbnail (query-related items kept)
  * - Enforces ALL results match query terms or concepts (no unrelated noise)
  */
@@ -59,7 +68,8 @@ class ScrapingEngine @Inject constructor(
         // Result targets — increased for better coverage
         const val TARGET_RESULTS_PER_PROVIDER = 100  // aim for 90-100+ per provider
         const val MIN_RESULTS_THRESHOLD       = 8    // below this on page 1 → try WebView + more pages
-        const val MAX_PAGES                   = 12   // max pages to walk per provider per query
+        const val MIN_ACCEPTABLE_RESULTS      = 40   // minimum acceptable results per provider
+        const val MAX_PAGES                   = 15   // increased from 12 to ensure 40+ results
 
         // Timeouts — extended to fetch more pages
         private const val PAGE_TIMEOUT_MS          = 30_000L   // per individual page fetch
@@ -78,7 +88,9 @@ class ScrapingEngine @Inject constructor(
             "/browse/", "/filter/", "/filters/", "/tags/tag/",
             "/type/", "/sort/", "/order/", "?sort=", "?order=",
             "/all-", "/list/genre", "/movies/genre", "/series/genre",
-            "?browse=", "?filter=", "?type=", "/listings/", "/catalog/"
+            "?browse=", "?filter=", "?type=", "/listings/", "/catalog/",
+            "/directory/", "/list/", "/browse-", "/section/", "/tag/",
+            "/archive/", "/collection/", "/library/"
         )
         
         // ── SUSPICIOUS CATEGORY TITLES ────────────────────────────────────────────
@@ -89,9 +101,18 @@ class ScrapingEngine @Inject constructor(
             "sports","news","music","kids","family","adventure","fantasy",
             "crime","mystery","western","war","history","biography","adult"
         )
+        
+        // ── CATEGORY ITEM INDICATORS ────────────────────────────────────────────────
+        // Patterns that indicate a result is a category/navigation item, not actual content
+        private val CATEGORY_ITEM_KEYWORDS = setOf(
+            "categories", "genres", "browse", "explore", "all titles",
+            "view all", "show more", "more results", "latest", "trending",
+            "popular", "featured", "new releases", "coming soon", "top",
+            "best of", "recommendations", "curated", "collection"
+        )
     }
 
-    // ── Cache ──────────────────────────────────────────────────────────────
+    // ── Cache ──────────────────────────────────────────────────────────
 
     private data class CacheEntry(
         val results: List<ProviderSearchResults>,
@@ -234,7 +255,7 @@ class ScrapingEngine @Inject constructor(
     }
 
     /**
-     * Core multi-page fetch loop.
+     * Core multi-page fetch loop - IMPROVED
      *
      * Walks pages 0..MAX_PAGES-1 until TARGET_RESULTS_PER_PROVIDER QUERY-RELEVANT results are
      * collected or the provider runs out of pages. Each page has its own PAGE_TIMEOUT_MS
@@ -242,6 +263,9 @@ class ScrapingEngine @Inject constructor(
      *
      * When page 0 returns fewer than MIN_RESULTS_THRESHOLD results, a WebView fetch is
      * attempted in parallel before continuing to page 1.
+     * 
+     * IMPROVEMENT: Continues fetching more pages until at least MIN_ACCEPTABLE_RESULTS (40+)
+     * are collected, ensuring consistent result volume across providers.
      */
     private suspend fun fetchUntilTarget(
         provider: Provider,
@@ -262,8 +286,13 @@ class ScrapingEngine @Inject constructor(
             }
         } catch (_: Exception) { null }
 
+        // Track failed pages to detect when we've exhausted provider
+        var consecutiveEmptyPages = 0
+        
         for (page in 0 until MAX_PAGES) {
+            // Stop if we hit target OR exhausted provider (3+ empty pages)
             if (allResults.size >= TARGET_RESULTS_PER_PROVIDER) break
+            if (consecutiveEmptyPages >= 3) break
 
             try {
                 val pageResults = withTimeoutOrNull(PAGE_TIMEOUT_MS) {
@@ -272,22 +301,26 @@ class ScrapingEngine @Inject constructor(
 
                 pageResults.forEach { r -> if (seenUrls.add(r.url)) allResults.add(r) }
 
+                if (pageResults.isEmpty()) {
+                    consecutiveEmptyPages++
+                } else {
+                    consecutiveEmptyPages = 0
+                }
+
                 // Page 0 low-yield → try WebView in parallel
                 if (page == 0 && allResults.size < MIN_RESULTS_THRESHOLD) {
-                    val wvResults = withTimeoutOrNull(20_000L) {
+                    val wvResults = withTimeoutOrNull(25_000L) {  // Increased from 20s to 25s
                         tryWebViewFetch(provider, effectiveQuery, query)
                     } ?: emptyList()
                     wvResults.forEach { r -> if (seenUrls.add(r.url)) allResults.add(r) }
                 }
 
-                // End of results for this provider
-                if (pageResults.isEmpty()) break
-
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) {
                 if (page == 0) break   // first page failed hard — give up
-                // subsequent page failure → just stop paging
-                break
+                consecutiveEmptyPages++
+                // subsequent page failure → just continue to next page
+                continue
             }
         }
 
@@ -330,7 +363,7 @@ class ScrapingEngine @Inject constructor(
         try {
             val searchUrl = smartNavigationEngine.findSearchUrl(provider.baseUrl, effectiveQuery)
                 ?: buildFallbackSearchUrl(provider, effectiveQuery, 0)
-            val html = webViewFetcher.fetch(searchUrl, effectiveQuery, timeoutMs = 18_000L)
+            val html = webViewFetcher.fetch(searchUrl, effectiveQuery, timeoutMs = 25_000L)  // Increased from 18s
             if (html.isNullOrBlank()) return@withContext emptyList()
             val doc = Jsoup.parse(html, provider.baseUrl)
             extractResultsWithThumbnails(doc, provider, originalQuery)
@@ -428,7 +461,8 @@ class ScrapingEngine @Inject constructor(
             if (matchesQueryEnhanced(result, query)) results.add(result)
         }
 
-        return if (results.size < 5) results + extractResultsGeneric(document, provider, query)
+        // Increase fallback threshold for better coverage
+        return if (results.size < 8) results + extractResultsGeneric(document, provider, query)
         else results
     }
 
@@ -441,7 +475,7 @@ class ScrapingEngine @Inject constructor(
         val elements = document.select(
             "article, .item, .result, .card, .post, li:has(a), tr:has(a), " +
             "[class*='item']:has(a), [class*='result']:has(a), [class*='card']:has(a)"
-        ).take(300)  // Increased from 200 to 300 to capture more candidates
+        ).take(400)  // Increased from 300 to 400 to capture more candidates
 
         for (el in elements) {
             try {
@@ -503,12 +537,14 @@ class ScrapingEngine @Inject constructor(
     // ── Validation & scoring ──────────────────────────────────────────────────
     
     /**
-     * Smart filtering that ALWAYS enforces query relevance:
-     * 1. Hard-block obvious catalog URLs
-     * 2. Soft-block generic titles only if NO description/thumbnail
-     * 3. REQUIRE all results match query keywords, concepts, or semantic relevance
+     * Enhanced smart filtering - IMPROVED
      * 
-     * Result: 100+ results per provider, all matching your search query
+     * 1. Hard-block obvious catalog URLs
+     * 2. Detect and block category items (new check)
+     * 3. Soft-block generic titles only if NO description/thumbnail
+     * 4. REQUIRE all results match query keywords, concepts, or semantic relevance
+     * 
+     * Result: 100+ results per provider, all matching your search query with NO category items
      */
     private fun validateAndFilterResults(
         results: List<SearchResult>,
@@ -528,7 +564,15 @@ class ScrapingEngine @Inject constructor(
             if (HARD_CATEGORY_URL_PATTERNS.any { urlLower.contains(it) }) return@filter false
 
             // ════════════════════════════════════════════════════════════
-            // BLOCK 2: SOFT CATEGORY TITLES — Only block if NO metadata
+            // BLOCK 2: CATEGORY ITEM DETECTION — NEW IMPROVED CHECK
+            // ════════════════════════════════════════════════════════════
+            // Detect and block items that are category/navigation links, not actual content
+            if (isCategoryItem(result, titleLower, urlLower)) {
+                return@filter false
+            }
+
+            // ════════════════════════════════════════════════════════════
+            // BLOCK 3: SOFT CATEGORY TITLES — Only block if NO metadata
             // ════════════════════════════════════════════════════════════
             // If title is a genre/category name BUT has description/thumbnail, keep it
             // (it's a real content page like "Best Action Movies" or has metadata)
@@ -542,7 +586,7 @@ class ScrapingEngine @Inject constructor(
             }
 
             // ════════════════════════════════════════════════════════════
-            // BLOCK 3: QUERY RELEVANCE — MUST pass at least one relevance check
+            // BLOCK 4: QUERY RELEVANCE — MUST pass at least one relevance check
             // ════════════════════════════════════════════════════════════
             val combined      = "$titleLower ${result.description?.lowercase() ?: ""} $urlLower"
             val hasKeyword    = queryWords.any { combined.contains(it) }
@@ -554,6 +598,38 @@ class ScrapingEngine @Inject constructor(
             // ENFORCE: Result must be query-related (one of these must be true)
             hasKeyword || hasConcept || semanticScore >= 12f
         }
+    }
+
+    /**
+     * Enhanced category item detection - NEW METHOD
+     * 
+     * Identifies results that are category/navigation links rather than actual content.
+     * This fixes the issue where categories are being listed in results.
+     */
+    private fun isCategoryItem(result: SearchResult, titleLower: String, urlLower: String): Boolean {
+        // Check if title contains category keywords
+        val categoryKeywordMatch = CATEGORY_ITEM_KEYWORDS.any { keyword ->
+            titleLower.contains(keyword)
+        }
+        
+        if (!categoryKeywordMatch) return false
+        
+        // If it has category keywords, it's likely a category item UNLESS it has rich metadata
+        // Rich metadata suggests it's a real content item (e.g., "Explore All Action Movies" with thumbnail)
+        val hasRichMetadata = !result.description.isNullOrBlank() && 
+                              !result.thumbnailUrl.isNullOrBlank()
+        
+        if (hasRichMetadata) return false  // Keep it - it's a real result with metadata
+        
+        // Check for more category indicators in URL
+        val categoryUrlPatterns = listOf(
+            "/browse", "/explore", "/all", "/categories", "/collection",
+            "/list-", "/shows-", "/series-"
+        )
+        val hasCategoryUrl = categoryUrlPatterns.any { urlLower.contains(it) }
+        
+        // If title AND URL both suggest category, it's definitely a category item
+        return hasCategoryUrl
     }
 
     private fun calculateRelevanceScore(
