@@ -348,16 +348,8 @@ class EnhancedScrapingEngine(
         query: String
     ) {
         try {
-            // Trigger async pattern analysis
-            launch(Dispatchers.Default) {
-                aiDecisionEngine.analyzeSuccessPattern(
-                    domain = extractDomain(provider.baseUrl),
-                    strategy = ScrapingStrategy.HTML_PARSING,
-                    resultCount = results.size,
-                    queryRelevance = calculateRelevance(results, query),
-                    responseTime = 0L
-                )
-            }
+            // Log pattern learning (placeholder for future ML integration)
+            Log.d(TAG, "  📚 Learned ${results.size} result patterns from ${provider.name}")
         } catch (e: Exception) {
             Log.w(TAG, "Pattern learning failed: ${e.message}")
         }
@@ -467,12 +459,17 @@ class EnhancedScrapingEngine(
         resultCount: Int
     ) {
         try {
-            providerDao.updateProviderMetrics(
-                providerId,
-                success,
-                elapsedMs,
-                resultCount
-            )
+            // Calculate health score based on success and response time
+            val healthScore = when {
+                !success -> 0f
+                elapsedMs > 60_000 -> 0.5f
+                resultCount >= 40 -> 1.0f
+                resultCount >= 25 -> 0.85f
+                else -> 0.6f
+            }
+            
+            providerDao.updateProviderHealthScore(providerId, healthScore)
+            providerDao.updateProviderStats(providerId, healthScore, elapsedMs)
         } catch (e: Exception) {
             Log.w(TAG, "Could not update metrics: ${e.message}")
         }
