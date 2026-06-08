@@ -119,6 +119,7 @@ interface ProviderDao {
 
     /**
      * Get providers that need re-analysis
+     * Prioritizes providers without analysis, then by oldest lastAnalyzed timestamp
      */
     @Query("""
         SELECT * FROM providers 
