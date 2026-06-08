@@ -80,8 +80,7 @@ interface ProviderDao {
     suspend fun updateProviderMetrics(
         providerId: String,
         success: Boolean,
-        responseTimeMs: Long,
-        resultCount: Int = 0
+        responseTimeMs: Long
     )
 
     /**
@@ -124,7 +123,7 @@ interface ProviderDao {
     @Query("""
         SELECT * FROM providers 
         WHERE isEnabled = 1 AND (lastAnalyzed IS NULL OR lastAnalyzed < :thresholdMs)
-        ORDER BY lastAnalyzed ASC NULLS FIRST
+        ORDER BY CASE WHEN lastAnalyzed IS NULL THEN 0 ELSE 1 END, lastAnalyzed ASC
     """)
     suspend fun getProvidersNeedingAnalysis(thresholdMs: Long): List<Provider>
 }
