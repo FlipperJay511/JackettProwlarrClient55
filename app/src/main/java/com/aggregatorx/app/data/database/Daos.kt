@@ -56,6 +56,9 @@ interface ProviderDao {
     
     @Query("UPDATE providers SET lastAnalyzed = :timestamp WHERE id = :id")
     suspend fun updateLastAnalyzed(id: String, timestamp: Long)
+    
+    @Query("UPDATE providers SET healthScore = :score WHERE id = :id")
+    suspend fun updateProviderHealthScore(id: String, score: Float)
 }
 
 @Dao
