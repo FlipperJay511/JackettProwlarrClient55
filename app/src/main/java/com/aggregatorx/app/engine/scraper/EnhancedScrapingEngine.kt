@@ -300,7 +300,7 @@ class EnhancedScrapingEngine(
     ): List<SearchResult> {
         return try {
             withTimeoutOrNull(WEBVIEW_TIMEOUT_MS) {
-                webViewProviderSearchEngine.searchWithWebViewEnhanced(provider, query)
+                webViewProviderSearchEngine.searchWithWebView(provider, query)
             } ?: emptyList()
         } catch (e: Exception) {
             Log.w(TAG, "  WebView crawl failed: ${e.message}")
