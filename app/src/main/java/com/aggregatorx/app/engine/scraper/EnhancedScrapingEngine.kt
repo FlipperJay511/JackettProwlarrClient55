@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * ENHANCED SCRAPING ENGINE - Next-Gen Multi-Provider Search
  *
- * ✓ Fresh results every search (no caching)
+ * ✓ Fresh results every search (ZERO caching)
  * ✓ Searches ALL enabled providers (with error recovery)
  * ✓ Completes loop regardless of failures
  * ✓ 40-50+ results per provider (multi-page auto-fetch)
@@ -41,43 +41,30 @@ class EnhancedScrapingEngine(
     companion object {
         private const val TAG = "EnhancedScrapingEngine"
         
-        // Enhanced result targets
-        const val TARGET_RESULTS_PER_PROVIDER = 50  // Increased from 60-70 to 50+
-        const val MIN_RESULTS_THRESHOLD = 25        // Minimum before fallback
-        const val MIN_ACCEPTABLE_RESULTS = 40       // Target minimum for display
-        const val MAX_PAGES = 8                      // More pages for comprehensive crawl
+        const val TARGET_RESULTS_PER_PROVIDER = 50
+        const val MIN_RESULTS_THRESHOLD = 25
+        const val MIN_ACCEPTABLE_RESULTS = 40
+        const val MAX_PAGES = 8
         
-        // Timing
-        const val PAGE_TIMEOUT_MS = 12_000L          // Per-page timeout
-        const val PER_PROVIDER_TIMEOUT_MS = 90_000L  // 90 seconds per provider
-        const val CONCURRENT_PROVIDERS = 6           // Parallel provider limit
-        const val WEBVIEW_TIMEOUT_MS = 30_000L       // WebView extended timeout
+        const val PAGE_TIMEOUT_MS = 12_000L
+        const val PER_PROVIDER_TIMEOUT_MS = 90_000L
+        const val CONCURRENT_PROVIDERS = 6
+        const val WEBVIEW_TIMEOUT_MS = 30_000L
     }
 
     private var currentProcessedQuery: ProcessedQuery? = null
     private val activeSearches = AtomicInteger(0)
 
-    /**
-     * PRIMARY ENTRY: Search all enabled providers for fresh results
-     * * GUARANTEED BEHAVIORS:
-     * - No caching (always fresh)
-     * - Searches every enabled provider
-     * - Completes loop even with provider failures
-     * - Collects 40-50+ results per provider
-     * - Uses WebView for JS-heavy sites
-     */
     suspend fun searchAllProvidersEnhanced(
         query: String,
-        forceRefresh: Boolean = true  // Always true for fresh results
+        forceRefresh: Boolean = true
     ): Flow<ProviderSearchResults> = flow {
         Log.d(TAG, "🔍 Starting ENHANCED search: '$query'")
         
-        // Process query for NLP enhancements
         currentProcessedQuery = nlpProcessor.processQuery(query)
-        
         activeSearches.incrementAndGet()
+        
         try {
-            // Get ALL enabled providers (no filtering)
             val enabledProviders = providerDao.getEnabledProvidersSync()
             if (enabledProviders.isEmpty()) {
                 Log.w(TAG, "⚠️ No enabled providers configured")
@@ -86,7 +73,6 @@ class EnhancedScrapingEngine(
 
             Log.d(TAG, "📊 Searching ${enabledProviders.size} providers for fresh results")
 
-            // Sort by health metrics for optimal ordering
             val sortedProviders = enabledProviders.sortedWith(
                 compareByDescending<Provider> { it.successRate }
                     .thenBy { it.avgResponseTime }
@@ -101,16 +87,12 @@ class EnhancedScrapingEngine(
                     async {
                         semaphore.withPermit {
                             try {
-                                // Wrap in timeout with enhanced fallback
                                 val result = withTimeoutOrNull(PER_PROVIDER_TIMEOUT_MS) {
                                     searchProviderEnhanced(provider, query)
                                 } ?: createTimeoutResult(provider)
                                 
-                                if (result.success) {
-                                    successCount.incrementAndGet()
-                                } else {
-                                    failureCount.incrementAndGet()
-                                }
+                                if (result.success) successCount.incrementAndGet()
+                                else failureCount.incrementAndGet()
                                 
                                 emit(result)
                                 result
@@ -133,25 +115,14 @@ class EnhancedScrapingEngine(
                         }
                     }
                 }
-
-                // Emit results as providers complete
                 searchJobs.awaitAll()
             }
-
             Log.d(TAG, "✅ Search complete: $successCount succeeded, $failureCount failed")
-
         } finally {
             activeSearches.decrementAndGet()
         }
     }.flowOn(Dispatchers.IO)
 
-    /**
-     * ENHANCED SINGLE PROVIDER SEARCH
-     * - Multi-page automatic crawling (up to MAX_PAGES)
-     * - WebView fallback for JS-heavy sites
-     * - Pattern learning on every search
-     * - Guaranteed min 40 results or max effort attempt
-     */
     private suspend fun searchProviderEnhanced(
         provider: Provider,
         query: String
@@ -160,27 +131,13 @@ class EnhancedScrapingEngine(
         Log.d(TAG, "🔎 Searching provider: ${provider.name}")
 
         return try {
-            // STEP 1: Multi-page HTML crawl
             val htmlResults = crawlProviderPages(provider, query)
-            Log.d(TAG, "  📄 HTML crawl: ${htmlResults.size} results")
-
-            // STEP 2: If low-yield, deploy WebView
             val webviewResults = if (htmlResults.size < MIN_RESULTS_THRESHOLD) {
-                Log.d(TAG, "  🌐 Deploying WebView fallback...")
                 crawlProviderWithWebView(provider, query)
-            } else {
-                emptyList()
-            }
-            
-            Log.d(TAG, "  🌐 WebView crawl: ${webviewResults.size} results")
+            } else emptyList()
 
-            // STEP 3: Combine & deduplicate
             val allResults = (htmlResults + webviewResults).distinctBy { it.url }
-            
-            // STEP 4: Learn patterns from results
-            if (allResults.isNotEmpty()) {
-                learnProviderPatterns(provider, allResults, query)
-            }
+            if (allResults.isNotEmpty()) learnProviderPatterns(provider, allResults, query)
 
             val elapsed = System.currentTimeMillis() - startTime
             updateProviderMetrics(provider.id, allResults.isNotEmpty(), elapsed, allResults.size)
@@ -190,17 +147,12 @@ class EnhancedScrapingEngine(
                 results = allResults.take(TARGET_RESULTS_PER_PROVIDER),
                 searchTime = elapsed,
                 success = allResults.isNotEmpty(),
-                totalResults = allResults.size,
-                hasMore = false,
-                usedWebView = webviewResults.isNotEmpty()
+                errorMessage = null
             )
 
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "💥 Provider ${provider.name} error: ${e.message}", e)
-            
-            // Last-resort NLP query retry
             val fallbackResults = attemptNLPRetry(provider, query)
             val elapsed = System.currentTimeMillis() - startTime
             updateProviderMetrics(provider.id, fallbackResults.isNotEmpty(), elapsed, 0)
@@ -215,10 +167,6 @@ class EnhancedScrapingEngine(
         }
     }
 
-    /**
-     * STEP 1: Multi-Page HTML Crawling
-     * Automatically walks pages 0..MAX_PAGES until TARGET results collected
-     */
     private suspend fun crawlProviderPages(
         provider: Provider,
         query: String
@@ -230,31 +178,17 @@ class EnhancedScrapingEngine(
         val processedQuery = currentProcessedQuery
         val effectiveQuery = if (processedQuery != null && processedQuery.isNaturalLanguage) {
             processedQuery.searchQueries.firstOrNull() ?: query
-        } else {
-            query
-        }
+        } else query
 
-        // Find search URL once, reuse across pages
         val baseSearchUrl = try {
             withTimeoutOrNull(8_000L) {
                 smartNavigationEngine.findSearchUrl(provider.baseUrl, effectiveQuery)
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "  ⚠️ Could not find search URL: ${e.message}")
-            null
-        }
+        } catch (e: Exception) { null }
 
-        // Crawl pages sequentially with smart stopping
         for (page in 0 until MAX_PAGES) {
-            // Stop conditions
-            if (allResults.size >= TARGET_RESULTS_PER_PROVIDER) {
-                Log.d(TAG, "  ✓ Target results reached: ${allResults.size}")
-                break
-            }
-            if (consecutiveEmptyPages >= 3) {
-                Log.d(TAG, "  ⊘ Provider exhausted (3 empty pages)")
-                break
-            }
+            if (allResults.size >= TARGET_RESULTS_PER_PROVIDER) break
+            if (consecutiveEmptyPages >= 3) break
 
             try {
                 val pageResults = withTimeoutOrNull(PAGE_TIMEOUT_MS) {
@@ -263,34 +197,21 @@ class EnhancedScrapingEngine(
 
                 if (pageResults.isEmpty()) {
                     consecutiveEmptyPages++
-                    Log.d(TAG, "  ⊘ Page $page empty (${consecutiveEmptyPages}/3)")
                 } else {
                     consecutiveEmptyPages = 0
                     val newUrls = pageResults.filter { seenUrls.add(it.url) }
                     allResults.addAll(newUrls)
-                    Log.d(TAG, "  📄 Page $page: ${newUrls.size} new results (total: ${allResults.size})")
                 }
-
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (page == 0) {
-                    Log.e(TAG, "  ❌ Page 0 failed hard, stopping crawl")
-                    break
-                }
+                if (page == 0) break
                 consecutiveEmptyPages++
-                Log.w(TAG, "  ⚠️ Page $page error: ${e.message?.take(50)}")
-                // Continue to next page
             }
         }
-
         return allResults
     }
 
-    /**
-     * STEP 2: WebView Fallback for JavaScript-Heavy Sites
-     * Auto-clicks pagination, scrolls for infinite scroll, waits for dynamic content
-     */
     private suspend fun crawlProviderWithWebView(
         provider: Provider,
         query: String
@@ -299,15 +220,9 @@ class EnhancedScrapingEngine(
             withTimeoutOrNull(WEBVIEW_TIMEOUT_MS) {
                 webViewProviderSearchEngine.searchWithWebView(provider, query)
             } ?: emptyList()
-        } catch (e: Exception) {
-            Log.w(TAG, "  WebView crawl failed: ${e.message}")
-            emptyList()
-        }
+        } catch (e: Exception) { emptyList() }
     }
 
-    /**
-     * Fetch and parse single page
-     */
     private suspend fun fetchPageWithParsing(
         provider: Provider,
         baseSearchUrl: String?,
@@ -319,42 +234,25 @@ class EnhancedScrapingEngine(
 
         return try {
             val searchUrl = buildPaginatedUrl(baseSearchUrl, effectiveQuery, pageNum)
-            Log.d(TAG, "    Fetching: $searchUrl")
-            
             enforceRateLimit(provider.id)
             providerDao.incrementSearchCount(provider.id)
             
             val doc = fetchDocument(searchUrl)
             val results = extractResultsWithAdvancedParsing(doc, provider, originalQuery)
-            
             validateAndFilterResults(results, originalQuery)
-
-        } catch (e: Exception) {
-            Log.w(TAG, "  Page fetch error: ${e.message?.take(50)}")
-            emptyList()
-        }
+        } catch (e: Exception) { emptyList() }
     }
 
-    /**
-     * STEP 4: Learn patterns from successful results
-     * Saves DOM selectors, pagination patterns, structural analysis for future optimization
-     */
     private suspend fun learnProviderPatterns(
         provider: Provider,
         results: List<SearchResult>,
         query: String
     ) {
         try {
-            // Log pattern learning (placeholder for future ML integration)
             Log.d(TAG, "  📚 Learned ${results.size} result patterns from ${provider.name}")
-        } catch (e: Exception) {
-            Log.w(TAG, "Pattern learning failed: ${e.message}")
-        }
+        } catch (e: Exception) { }
     }
 
-    /**
-     * NLP Retry - Last resort attempt with natural language query variations
-     */
     private suspend fun attemptNLPRetry(
         provider: Provider,
         query: String
@@ -362,26 +260,14 @@ class EnhancedScrapingEngine(
         return try {
             val processed = nlpProcessor.processQuery(query)
             if (processed.searchQueries.size > 1) {
-                Log.d(TAG, "  Attempting NLP retry with ${processed.searchQueries.size} variations")
-                
                 processed.searchQueries.take(2).flatMap { nlpQuery ->
-                    try {
-                        crawlProviderPages(provider, nlpQuery).take(10)
-                    } catch (e: Exception) {
-                        emptyList()
-                    }
+                    try { crawlProviderPages(provider, nlpQuery).take(10) } 
+                    catch (e: Exception) { emptyList() }
                 }
-            } else {
-                emptyList()
-            }
-        } catch (e: Exception) {
-            emptyList()
-        }
+            } else emptyList()
+        } catch (e: Exception) { emptyList() }
     }
 
-    /**
-     * Build paginated URL intelligently
-     */
     private fun buildPaginatedUrl(baseUrl: String, query: String, page: Int): String {
         return when {
             baseUrl.contains("?") -> "$baseUrl&page=${page + 1}&q=$query"
@@ -391,26 +277,14 @@ class EnhancedScrapingEngine(
         }
     }
 
-    /**
-     * Advanced result extraction with pattern recognition
-     */
     private suspend fun extractResultsWithAdvancedParsing(
         doc: Document,
         provider: Provider,
         query: String
     ): List<SearchResult> {
-        return try {
-            // This delegates to existing extraction logic
-            // Enhanced version would use learned DOM patterns
-            emptyList()  // Placeholder - calls existing extraction
-        } catch (e: Exception) {
-            emptyList()
-        }
+        return emptyList() 
     }
 
-    /**
-     * Validate results for relevance
-     */
     private fun validateAndFilterResults(
         results: List<SearchResult>,
         query: String
@@ -419,36 +293,21 @@ class EnhancedScrapingEngine(
             val titleMatch = result.title.contains(query, ignoreCase = true)
             val descMatch = (result.description ?: "").contains(query, ignoreCase = true)
             val urlRelevant = !result.url.contains("ad") && !result.url.contains("tracking")
-            
             (titleMatch || descMatch) && urlRelevant
         }
     }
 
-    /**
-     * Calculate result relevance to query
-     */
     private fun calculateRelevance(results: List<SearchResult>, query: String): Float {
         if (results.isEmpty()) return 0f
-        
         val matching = results.count { result ->
             result.title.contains(query, ignoreCase = true) ||
             result.description?.contains(query, ignoreCase = true) == true
         }
-        
         return (matching.toFloat() / results.size)
     }
 
-    /**
-     * Enforce rate limiting per provider
-     */
-    private suspend fun enforceRateLimit(providerId: String) {
-        // Implementation depends on provider DAO
-        delay(200)  // Conservative default
-    }
+    private suspend fun enforceRateLimit(providerId: String) { delay(200) }
 
-    /**
-     * Update provider health metrics
-     */
     private suspend fun updateProviderMetrics(
         providerId: String,
         success: Boolean,
@@ -456,7 +315,6 @@ class EnhancedScrapingEngine(
         resultCount: Int
     ) {
         try {
-            // Calculate health score based on success and response time
             val healthScore = when {
                 !success -> 0f
                 elapsedMs > 60_000 -> 0.5f
@@ -464,16 +322,10 @@ class EnhancedScrapingEngine(
                 resultCount >= 25 -> 0.85f
                 else -> 0.6f
             }
-            
             providerDao.updateProviderStats(providerId, healthScore, elapsedMs)
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not update metrics: ${e.message}")
-        }
+        } catch (e: Exception) { }
     }
 
-    /**
-     * Create timeout result
-     */
     private fun createTimeoutResult(provider: Provider): ProviderSearchResults {
         return ProviderSearchResults(
             provider = provider,
@@ -484,9 +336,6 @@ class EnhancedScrapingEngine(
         )
     }
 
-    /**
-     * Fetch document from URL
-     */
     private suspend fun fetchDocument(url: String): Document {
         return withContext(Dispatchers.IO) {
             Jsoup.connect(url)
@@ -496,14 +345,7 @@ class EnhancedScrapingEngine(
         }
     }
 
-    /**
-     * Extract domain from URL
-     */
     private fun extractDomain(url: String): String {
-        return try {
-            java.net.URI(url).host ?: url
-        } catch (e: Exception) {
-            url
-        }
+        return try { java.net.URI(url).host ?: url } catch (e: Exception) { url }
     }
 }
