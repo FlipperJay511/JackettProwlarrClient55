@@ -70,7 +70,6 @@ fun MainScreen() {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
-    // Shared SearchViewModel
     val searchViewModel: SearchViewModel = hiltViewModel()
     val isDiscoveryPaused by searchViewModel.isDiscoveryPaused.collectAsState()
 
@@ -111,7 +110,6 @@ fun MainScreen() {
                 enterTransition = { fadeIn(tween(250)) + slideInHorizontally { -it / 4 } },
                 exitTransition  = { fadeOut(tween(250)) + slideOutHorizontally { -it / 4 } }
             ) {
-                // FIXED: Wrapped correctly in lambda context
                 SearchScreen(viewModel = searchViewModel)
             }
             composable(
@@ -132,7 +130,6 @@ fun MainScreen() {
     }
 }
 
-// ── MISSION CONTROL TOP BAR ─────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MissionControlTopBar(
