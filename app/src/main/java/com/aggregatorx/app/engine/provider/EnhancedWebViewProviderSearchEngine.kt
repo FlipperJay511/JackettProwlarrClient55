@@ -15,8 +15,7 @@ import javax.inject.Inject
 
 /**
  * ENHANCED WebView Provider Search Engine
- * 
- * ✓ Multi-page auto-crawling with pagination clicking
+ * * ✓ Multi-page auto-crawling with pagination clicking
  * ✓ Infinite scroll detection & auto-scrolling
  * ✓ JavaScript injection for custom searches
  * ✓ 40-50+ results target with smart stopping
@@ -37,8 +36,7 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
 
     /**
      * ENHANCED: Multi-page WebView crawling with auto-pagination
-     * 
-     * Automatically detects and clicks "Next" buttons, handles infinite scroll,
+     * * Automatically detects and clicks "Next" buttons, handles infinite scroll,
      * and collects up to 50 results across multiple pages.
      */
     suspend fun searchWithWebViewEnhanced(
@@ -65,8 +63,8 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
 
             while (page < MAX_PAGES && allResults.size < TARGET_RESULTS) {
                 try {
-                    // Parse current page
-                    val pageResults = parseWebViewResults(html, provider)
+                    // Parse current page safely bypassing var smart-cast limitation
+                    val pageResults = parseWebViewResults(html!!, provider)
                     val newResults = pageResults.filter { seenUrls.add(it.url) }
                     
                     if (newResults.isNotEmpty()) {
@@ -81,7 +79,7 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
                     if (consecutiveEmpty >= 3) break
 
                     // Try to fetch next page
-                    html = tryFetchNextPage(engine, html, provider, query, page) ?: break
+                    html = tryFetchNextPage(engine, html!!, provider, query, page) ?: break
                     page++
 
                 } catch (e: Exception) {
