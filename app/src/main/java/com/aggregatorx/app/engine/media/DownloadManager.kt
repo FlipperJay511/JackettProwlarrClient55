@@ -28,8 +28,7 @@ import javax.inject.Singleton
 
 /**
  * AggravatedX Enhanced Download Manager
- * 
- * Features:
+ * * Features:
  * - Automatic highest quality selection
  * - Video extraction with headless browser fallback
  * - Auto-click ad bypass during extraction
