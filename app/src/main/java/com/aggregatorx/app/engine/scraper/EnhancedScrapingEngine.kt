@@ -6,13 +6,13 @@ import com.aggregatorx.app.engine.ai.AIDecisionEngine
 import com.aggregatorx.app.engine.provider.WebViewProviderSearchEngine
 import com.aggregatorx.app.engine.ranking.RankingEngine
 import com.aggregatorx.app.engine.analyzer.SiteAnalyzerEngine
-import com.aggregatorx.app.engine.analyzer.SmartNavigationEngine
 import com.aggregatorx.app.engine.nlp.NaturalLanguageQueryProcessor
 import com.aggregatorx.app.engine.nlp.ProcessedQuery
 import com.aggregatorx.app.data.database.ProviderDao
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit // Added to fix the Unresolved Reference & Coroutine Body errors
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.util.concurrent.atomic.AtomicInteger
@@ -32,7 +32,7 @@ class EnhancedScrapingEngine(
     private val providerDao: ProviderDao,
     private val aiDecisionEngine: AIDecisionEngine,
     private val siteAnalyzerEngine: SiteAnalyzerEngine,
-    private val smartNavigationEngine: SmartNavigationEngine,
+    // Removed unresolved SmartNavigationEngine
     private val webViewProviderSearchEngine: WebViewProviderSearchEngine,
     private val webViewFetcher: WebViewFetcher,
     private val rankingEngine: RankingEngine,
@@ -83,8 +83,9 @@ class EnhancedScrapingEngine(
             val failureCount = AtomicInteger(0)
 
             coroutineScope {
-                val searchJobs = sortedProviders.map { provider ->
-                    async {
+                // Fixed Type Inference mapping errors
+                val searchJobs: List<Deferred<ProviderSearchResults>> = sortedProviders.map { provider ->
+                    async<ProviderSearchResults> { 
                         semaphore.withPermit {
                             try {
                                 val result = withTimeoutOrNull(PER_PROVIDER_TIMEOUT_MS) {
@@ -180,10 +181,11 @@ class EnhancedScrapingEngine(
             processedQuery.searchQueries.firstOrNull() ?: query
         } else query
 
+        // Safe fallback bypassing missing SmartNavigationEngine
         val baseSearchUrl = try {
-            withTimeoutOrNull(8_000L) {
-                smartNavigationEngine.findSearchUrl(provider.baseUrl, effectiveQuery)
-            }
+            provider.searchPattern
+                .replace("{baseUrl}", provider.baseUrl)
+                .replace("{query}", effectiveQuery)
         } catch (e: Exception) { null }
 
         for (page in 0 until MAX_PAGES) {
