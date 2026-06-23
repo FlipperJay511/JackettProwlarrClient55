@@ -1,13 +1,10 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    // The Kotlin Compose Gradle plugin can cause resolution issues on some plugin portals.
-    // We don't apply org.jetbrains.kotlin.plugin.compose here to avoid plugin resolution failures;
-    // composeOptions and the Compose BOM are sufficient for Android builds when using a compatible
-    // kotlinCompilerExtensionVersion.
+    // The Kotlin Compose Gradle plugin is intentionally not applied here; we rely on composeOptions + BOM.
     id("com.google.dagger.hilt.android")
     id("kotlin-kapt")
-    id("com.google.devtools.ksp")
+    // KSP removed to avoid plugin resolution issues on some runners; Room uses kapt now.
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
@@ -103,7 +100,7 @@ dependencies {
     val roomVersion = "2.6.1"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
-    ksp("androidx.room:room-compiler:$roomVersion")
+    kapt("androidx.room:room-compiler:$roomVersion")
 
     // --- NETWORKING (OkHttp & Retrofit) ---
     implementation(platform("com.squareup.okhttp3:okhttp-bom:4.12.0"))
