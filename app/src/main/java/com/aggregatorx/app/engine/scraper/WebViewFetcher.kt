@@ -1,88 +1,100 @@
 package com.aggregatorx.app.engine.scraper
 
 import android.content.Context
+import android.webkit.CookieManager
 import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.webkit.WebSettings
-import kotlinx.coroutines.*
-import java.util.concurrent.atomic.AtomicReference
-import javax.inject.Inject
-import javax.inject.Singleton
+import com.aggregatorx.app.engine.network.PersistentCookieJar
+import com.aggregatorx.app.engine.webview.HeadlessBrowserHelper
+import com.aggregatorx.app.engine.webview.JavaScriptWebViewEngine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
-@Singleton
-class WebViewFetcher @Inject constructor(
-    private val context: Context
+/**
+ * WebView-based fetcher that loads a page in a headless WebView, extracts final
+ * HTML and cookies, and returns them to the caller. This is used as a fallback
+ * when direct HTTP requests receive anti-bot challenges or require JS.
+ */
+class WebViewFetcher(
+    private val context: Context,
+    private val cookieJar: PersistentCookieJar
 ) {
 
-    private val webViewInstance = AtomicReference<WebView?>(null)
-
-    suspend fun fetch(
-        url: String,
-        query: String,
-        timeoutMs: Long = 18_000L
-    ): String? = withContext(Dispatchers.Main) {
-        var webView: WebView? = null
-        return@withContext try {
-            webView = WebView(context)
-            
-            webView.settings.apply {
-                javaScriptEnabled = true
-                domStorageEnabled = false
-                databaseEnabled = false
-                mixedContentMode = 1  // WebSettings.MIXED_CONTENT_NEVER
-                cacheMode = WebSettings.LOAD_NO_CACHE
-                defaultTextEncodingName = "utf-8"
+    suspend fun fetch(url: String, desiredUserAgent: String): FetchResult = withContext(Dispatchers.IO) {
+        val webView = HeadlessBrowserHelper.createWebView(context)
+        try {
+            // Ensure user agent matches HTTP client
+            withContext(Dispatchers.Main) {
+                webView.settings.userAgentString = desiredUserAgent
             }
 
-            val htmlRef = AtomicReference<String?>(null)
-            var finished = false
+            val loaded = FetchResult.Loading()
+            val completed = java.util.concurrent.atomic.AtomicReference<FetchResult?>(null)
 
-            webView.webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    htmlRef.set(view?.title ?: "")
-                    finished = true
-                }
-                
-                override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
-                    finished = true
-                }
-            }
+            // Load the URL on main thread and wait for load finished
+            val semaphore = java.util.concurrent.CountDownLatch(1)
 
-            webView.loadUrl(url)
-            
-            val startTime = System.currentTimeMillis()
-            while (!finished && System.currentTimeMillis() - startTime < timeoutMs) {
-                delay(100)
-            }
-
-            val result = try {
-                webView.evaluateJavascript("document.documentElement.outerHTML") { html ->
-                    htmlRef.set(html?.removeSurrounding("\""))
-                }
-                htmlRef.get()
-            } catch (_: Exception) {
-                htmlRef.get()
-            }
-
-            result.takeIf { !it.isNullOrBlank() }
-
-        } catch (e: Exception) {
-            null
-        } finally {
-            webView?.apply {
-                try {
-                    stopLoading()
-                    clearHistory()
-                    clearCache(true)
-                    settings.apply {
-                        javaScriptEnabled = false
-                        domStorageEnabled = false
+            withContext(Dispatchers.Main) {
+                webView.webViewClient = object : android.webkit.WebViewClient() {
+                    override fun onPageFinished(view: WebView?, urlStr: String?) {
+                        try {
+                            semaphore.countDown()
+                        } catch (_: Throwable) {
+                        }
                     }
-                    removeAllViews()
-                    destroy()
-                } catch (_: Exception) {}
+
+                    override fun onReceivedError(
+                        view: WebView?,
+                        request: android.webkit.WebResourceRequest?,
+                        error: android.webkit.WebResourceError?
+                    ) {
+                        semaphore.countDown()
+                    }
+                }
+
+                webView.loadUrl(url)
             }
-            webViewInstance.set(null)
+
+            // Wait for page finished or timeout
+            val finished = semaphore.await(45, TimeUnit.SECONDS)
+
+            // Extract HTML
+            val rawHtml = try {
+                JavaScriptWebViewEngine.eval(webView, "(function(){return document.documentElement.outerHTML;})()")
+            } catch (t: Throwable) {
+                ""
+            }
+
+            // Extract cookies from CookieManager
+            val cookieManager = CookieManager.getInstance()
+            val cookieHeader = cookieManager.getCookie(url)
+
+            // Persist cookies into the persistent jar
+            if (!cookieHeader.isNullOrEmpty()) {
+                try {
+                    val parsedUrl = HttpUrl.get(url)
+                    cookieJar.importCookiesFromHeader(parsedUrl, cookieHeader)
+                } catch (t: Throwable) {
+                    // ignore
+                }
+            }
+
+            val result = FetchResult.Success(rawHtml ?: "", cookieHeader ?: "")
+            return@withContext result
+        } finally {
+            try {
+                HeadlessBrowserHelper.destroyWebView(webView)
+            } catch (_: Throwable) {
+            }
         }
+    }
+
+    sealed class FetchResult {
+        class Loading : FetchResult()
+        data class Success(val html: String, val cookies: String) : FetchResult()
+        data class Error(val message: String) : FetchResult()
     }
 }
