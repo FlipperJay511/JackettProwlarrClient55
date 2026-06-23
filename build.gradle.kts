@@ -4,7 +4,9 @@ plugins {
     id("com.android.library") version "8.7.3" apply false
     // Use a stable Kotlin 1.9.x release compatible with Compose and existing tooling
     id("org.jetbrains.kotlin.android") version "1.9.22" apply false
-    id("org.jetbrains.kotlin.plugin.compose") version "1.9.22" apply false
+    // Note: the Kotlin Compose plugin is not published with the same artifact on plugin portal for some versions.
+    // We avoid declaring org.jetbrains.kotlin.plugin.compose here to prevent plugin resolution failures and
+    // instead rely on composeOptions + dependencies in the module's build file.
     id("com.google.dagger.hilt.android") version "2.55" apply false
     id("org.jetbrains.kotlin.plugin.serialization") version "1.9.22" apply false
     // KSP version compatible with Kotlin 1.9.x
