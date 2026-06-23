@@ -11,6 +11,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONTokener
 import java.util.concurrent.TimeUnit
 
 /**
@@ -31,10 +32,6 @@ class WebViewFetcher(
                 webView.settings.userAgentString = desiredUserAgent
             }
 
-            val loaded = FetchResult.Loading()
-            val completed = java.util.concurrent.atomic.AtomicReference<FetchResult?>(null)
-
-            // Load the URL on main thread and wait for load finished
             val semaphore = java.util.concurrent.CountDownLatch(1)
 
             withContext(Dispatchers.Main) {
@@ -59,13 +56,24 @@ class WebViewFetcher(
             }
 
             // Wait for page finished or timeout
-            val finished = semaphore.await(45, TimeUnit.SECONDS)
+            semaphore.await(45, TimeUnit.SECONDS)
 
-            // Extract HTML
-            val rawHtml = try {
+            // Extract HTML (evaluateJavascript returns a JSON-encoded string)
+            val rawResult = try {
                 JavaScriptWebViewEngine.eval(webView, "(function(){return document.documentElement.outerHTML;})()")
             } catch (t: Throwable) {
-                ""
+                null
+            }
+
+            val rawHtml = try {
+                if (rawResult == null) "" else {
+                    // Unescape JSON string result
+                    val parsed = JSONTokener(rawResult).nextValue()
+                    if (parsed is String) parsed else rawResult
+                }
+            } catch (t: Throwable) {
+                // fallback to rawResult
+                rawResult ?: ""
             }
 
             // Extract cookies from CookieManager

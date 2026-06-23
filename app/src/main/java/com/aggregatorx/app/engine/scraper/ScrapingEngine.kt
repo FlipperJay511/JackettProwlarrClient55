@@ -2,14 +2,11 @@ package com.aggregatorx.app.engine.scraper
 
 import android.content.Context
 import com.aggregatorx.app.engine.network.PersistentCookieJar
+import com.aggregatorx.app.engine.webview.WebViewFetcher as WVF
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.time.Duration
-import kotlin.random.Random
 
 /**
  * Basic scraping engine that uses OkHttp for direct requests and falls back to
@@ -20,7 +17,8 @@ class ScrapingEngine(
     private val context: Context,
     private val client: OkHttpClient,
     private val cookieJar: PersistentCookieJar,
-    private val webViewFetcher: WebViewFetcher
+    private val webViewFetcher: WebViewFetcher,
+    private val userAgent: String
 ) {
 
     suspend fun fetchHtml(url: String): String = withContext(Dispatchers.IO) {
@@ -28,6 +26,7 @@ class ScrapingEngine(
         val request = Request.Builder()
             .url(url)
             .get()
+            .header("User-Agent", userAgent)
             .build()
 
         try {
@@ -37,7 +36,7 @@ class ScrapingEngine(
 
             if (isChallengeResponse(code, body)) {
                 // Fallback to WebView
-                val w = webViewFetcher.fetch(url, client.dispatcher().executorService().toString())
+                val w = webViewFetcher.fetch(url, userAgent)
                 return@withContext when (w) {
                     is WebViewFetcher.FetchResult.Success -> w.html
                     is WebViewFetcher.FetchResult.Error -> throw Exception(w.message)
@@ -48,7 +47,7 @@ class ScrapingEngine(
             return@withContext body
         } catch (t: Throwable) {
             // On network failure, try with WebView
-            val w = webViewFetcher.fetch(url, extractUserAgentFromClient())
+            val w = webViewFetcher.fetch(url, userAgent)
             return@withContext when (w) {
                 is WebViewFetcher.FetchResult.Success -> w.html
                 is WebViewFetcher.FetchResult.Error -> throw t
@@ -64,8 +63,4 @@ class ScrapingEngine(
         return false
     }
 
-    private fun extractUserAgentFromClient(): String {
-        // Try to read the user-agent from the client's interceptors or fall back
-        return "Mozilla/5.0 (Android)"
-    }
 }

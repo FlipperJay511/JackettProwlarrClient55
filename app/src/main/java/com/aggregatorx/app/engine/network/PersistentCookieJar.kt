@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * A small persistent CookieJar implementation using SharedPreferences.
- * It serializes cookies as the "Set-Cookie" style string and re-parses them
+ * It serializes cookies as the OkHttp Cookie#toString representation and re-parses them
  * when loading. This keeps cookies shared between WebView and OkHttp.
  */
 class PersistentCookieJar(private val context: Context) : CookieJar {
@@ -34,7 +34,7 @@ class PersistentCookieJar(private val context: Context) : CookieJar {
         val list = cache.getOrPut(host) { mutableListOf() }
         var changed = false
         for (c in cookies) {
-            val cookieString = c.toString() // OkHttp cookie string can be parsed later with Cookie.parse
+            val cookieString = c.toString()
             if (!list.contains(cookieString)) {
                 list.add(cookieString)
                 changed = true
@@ -96,23 +96,41 @@ class PersistentCookieJar(private val context: Context) : CookieJar {
 
     /**
      * Allows external callers (e.g., WebView fetcher) to import cookies for a URL
-     * given a "cookie" header string like "a=1; b=2" or a full set-cookie string.
+     * given a cookie header string like "a=1; b=2" or a full set-cookie header.
+     * This will construct minimal OkHttp Cookie objects with domain and path set
+     * so they are available for subsequent requests.
      */
     fun importCookiesFromHeader(url: HttpUrl, cookieHeader: String) {
         val host = url.host
-        val parts = cookieHeader.splitToSequence(';')
         val list = cache.getOrPut(host) { mutableListOf() }
+        val parts = cookieHeader.split(';')
+        var changed = false
         for (p in parts) {
-            val trimmed = p.trim()
-            if (trimmed.isEmpty()) continue
-            // Try to parse as a cookie string
-            val c = Cookie.parse(url, trimmed)
-            if (c != null) {
+            val nv = p.trim()
+            if (nv.isEmpty()) continue
+            val eq = nv.indexOf('=')
+            if (eq <= 0) continue
+            val name = nv.substring(0, eq).trim()
+            val value = nv.substring(eq + 1).trim()
+            try {
+                val builder = Cookie.Builder()
+                    .name(name)
+                    .value(value)
+                    .domain(host)
+                    .path("/")
+                // mark secure if the url is HTTPS
+                if (url.isHttps) builder.secure()
+                val c = builder.build()
                 val raw = c.toString()
-                if (!list.contains(raw)) list.add(raw)
+                if (!list.contains(raw)) {
+                    list.add(raw)
+                    changed = true
+                }
+            } catch (t: Throwable) {
+                // ignore malformed cookie part
             }
         }
-        persistToPrefs()
+        if (changed) persistToPrefs()
     }
 
 }

@@ -18,18 +18,18 @@ class EnhancedScrapingEngine(
     private val client: OkHttpClient,
     private val cookieJar: PersistentCookieJar,
     private val proxyEngine: ProxyVPNEngine,
-    private val webViewFetcher: WebViewFetcher
+    private val webViewFetcher: WebViewFetcher,
+    private val userAgent: String
 ) {
 
-    private val baseEngine by lazy { ScrapingEngine(context, client, cookieJar, webViewFetcher) }
+    private val baseEngine by lazy { ScrapingEngine(context, client, cookieJar, webViewFetcher, userAgent) }
 
     suspend fun fetchWithPoliteness(url: String): String = withContext(Dispatchers.IO) {
         // Randomized delay to emulate human browsing
         val jitter = Random.nextLong(300, 1200)
         delay(jitter)
 
-        // Rotate proxy (applied when creating a new client) - here we recommend
-        // creating a transient client per request if proxies are changing.
+        // Attempt fetch with base engine
         try {
             return@withContext baseEngine.fetchHtml(url)
         } catch (t: Throwable) {
@@ -38,8 +38,12 @@ class EnhancedScrapingEngine(
             var lastEx: Throwable? = null
             for (i in 0 until attempts) {
                 try {
-                    proxyEngine.applyProxyIfNeeded(client.newBuilder())
-                    val html = baseEngine.fetchHtml(url)
+                    // Build a transient client with proxy applied
+                    val transientBuilder = client.newBuilder()
+                    proxyEngine.applyProxyIfNeeded(transientBuilder)
+                    val transientClient = transientBuilder.build()
+                    val engine = ScrapingEngine(context, transientClient, cookieJar, webViewFetcher, userAgent)
+                    val html = engine.fetchHtml(url)
                     return@withContext html
                 } catch (e: Throwable) {
                     lastEx = e

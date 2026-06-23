@@ -9,6 +9,7 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import dagger.hilt.android.qualifiers.ApplicationContext
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -27,7 +28,7 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideDefaultUserAgent(context: Context): String {
+    fun provideDefaultUserAgent(@ApplicationContext context: Context): String {
         return try {
             WebSettings.getDefaultUserAgent(context)
         } catch (t: Throwable) {
@@ -37,13 +38,13 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun providePersistentCookieJar(context: Context): PersistentCookieJar {
+    fun providePersistentCookieJar(@ApplicationContext context: Context): PersistentCookieJar {
         return PersistentCookieJar(context.applicationContext)
     }
 
     @Provides
     @Singleton
-    fun provideProxyVPNEngine(context: Context): ProxyVPNEngine = ProxyVPNEngine(context.applicationContext)
+    fun provideProxyVPNEngine(@ApplicationContext context: Context): ProxyVPNEngine = ProxyVPNEngine(context.applicationContext)
 
     @Provides
     @Singleton
@@ -82,7 +83,7 @@ object NetworkModule {
         // Apply network tuning
         NetworkOptimizer.tune(builder)
 
-        // Apply proxy if configured
+        // Apply proxy if configured for the base client (rotation may be applied per-request elsewhere)
         proxyEngine.applyProxyIfNeeded(builder)
 
         return builder.build()
