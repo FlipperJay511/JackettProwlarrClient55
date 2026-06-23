@@ -427,8 +427,8 @@ private fun FullScreenPlayer(
         AnimatedVisibility(visible = showControls && !hasError, enter = fadeIn(), exit = fadeOut()) {
             PlayerControls(
                 title = title, videoUrl = videoUrl, isPlaying = isPlaying, isLocked = isLocked,
-                currentPos = currentPos, duration = duration, playbackSpeed = playbackSpeed,
-                showSpeedMenu = showSpeedMenu, exoPlayer = exoPlayer,
+                currentPos = currentPos, duration = duration, playbackSpeed = playbackSpeed, showSpeedMenu = showSpeedMenu,
+                exoPlayer = exoPlayer,
                 onClose = onClose, onEnterPip = onEnterPip,
                 onLockToggle = { isLocked = !isLocked },
                 onSpeedMenuToggle = { showSpeedMenu = !showSpeedMenu },
@@ -456,7 +456,7 @@ private fun SideIndicator(
     Column(modifier = modifier.clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.7f)).padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Icon(icon, null, tint = CyberCyan, modifier = Modifier.size(24.dp))
-        LinearProgressIndicator(progress = { value }, modifier = Modifier.width(4.dp).height(80.dp),
+        LinearProgressIndicator(progress = value, modifier = Modifier.width(4.dp).height(80.dp),
             color = CyberCyan, trackColor = Color.White.copy(alpha = 0.2f))
         Text(label, color = Color.White, fontSize = 11.sp)
     }
