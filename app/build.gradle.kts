@@ -1,8 +1,8 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    // Compose Compiler plugin is required for Kotlin 2.0+
-    id("org.jetbrains.compose.compiler")
+    // Official Kotlin Compose compiler Gradle plugin matching the Kotlin version
+    id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.dagger.hilt.android")
     id("kotlin-kapt")
     // KSP removed to avoid plugin resolution issues on some runners; Room uses kapt now.
@@ -57,10 +57,8 @@ android {
         compose = true
     }
 
-    composeOptions {
-        // Use a Compose compiler extension compatible with Kotlin 2.1.x
-        kotlinCompilerExtensionVersion = "2.0.0"
-    }
+    // Note: composeOptions.kotlinCompilerExtensionVersion is removed. 
+    // The compiler version is now tied to the Kotlin version and configured by the plugin above.
 
     packaging {
         resources {
