@@ -57,9 +57,6 @@ android {
         compose = true
     }
 
-    // Note: composeOptions.kotlinCompilerExtensionVersion is removed. 
-    // The compiler version is now tied to the Kotlin version and configured by the plugin above.
-
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -96,7 +93,8 @@ dependencies {
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
 
     // --- ROOM ---
-    val roomVersion = "2.6.1"
+    // Upgraded from 2.6.1 to 2.7.2 to support metadata parsing in Kotlin 2.1.0+
+    val roomVersion = "2.7.2"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     kapt("androidx.room:room-compiler:$roomVersion")
