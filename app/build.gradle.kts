@@ -1,7 +1,8 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    // The Kotlin Compose Gradle plugin is intentionally not applied here; we rely on composeOptions + BOM.
+    // Compose Compiler plugin is required for Kotlin 2.0+
+    id("org.jetbrains.compose.compiler")
     id("com.google.dagger.hilt.android")
     id("kotlin-kapt")
     // KSP removed to avoid plugin resolution issues on some runners; Room uses kapt now.
