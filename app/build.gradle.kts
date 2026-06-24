@@ -46,8 +46,8 @@ android {
         jvmTarget = "17"
         freeCompilerArgs += listOf(
             "-Xjvm-default=all",
-            "-Xopt-in=kotlin.RequiresOptIn",
-            "-Xopt-in=androidx.compose.foundation.ExperimentalFoundationApi",
+            "-opt-in=kotlin.RequiresOptIn",
+            "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi",
             "-Xskip-prerelease-check"
         )
     }
@@ -57,8 +57,8 @@ android {
     }
 
     composeOptions {
-        // Use a Compose compiler extension compatible with Kotlin 1.9.x
-        kotlinCompilerExtensionVersion = "1.5.4"
+        // Use a Compose compiler extension compatible with Kotlin 2.1.x
+        kotlinCompilerExtensionVersion = "2.0.0"
     }
 
     packaging {
