@@ -144,6 +144,7 @@ class SiteAnalyzerEngine @Inject constructor() {
             val apiAnalysis = detectAPIEndpoints(document, response.body())
             val navigationStructure = analyzeNavigation(document)
             val scrapingStrategy = determineScrapingStrategy(document, patterns)
+            val searchUrlTemplate = detectSearchUrlTemplate(document, baseUrl)
             
             val result = SiteAnalysis(
                 providerId = providerId,
@@ -179,6 +180,7 @@ class SiteAnalyzerEngine @Inject constructor() {
                 resultContainerSelector = patterns.find { it.type == PatternType.RESULT_LIST }?.selector,
                 resultItemSelector = patterns.find { it.type == PatternType.RESULT_ITEM }?.selector,
                 paginationSelector = patterns.find { it.type == PatternType.PAGINATION }?.selector,
+                searchUrlTemplate = searchUrlTemplate,
                 
                 // Media
                 videoPlayerType = mediaAnalysis.playerType,
@@ -219,6 +221,71 @@ class SiteAnalyzerEngine @Inject constructor() {
                 securityScore = 0f
             )
         }
+    }
+
+    /**
+     * Detect a usable search URL template from a GET-method search form.
+     * Returns something like "{baseUrl}/search?q={query}", or null if no
+     * usable GET search form was found (e.g. it's POST-only, or absent).
+     */
+    private fun detectSearchUrlTemplate(document: Document, baseUrl: String): String? {
+        // Find a search form using the same selectors used for pattern detection
+        val form = SEARCH_FORM_SELECTORS.firstNotNullOfOrNull { selector ->
+            document.select(selector).firstOrNull()
+        } ?: return null
+
+        // Only GET forms produce a usable URL template; POST forms need different handling
+        val method = form.attr("method").ifEmpty { "get" }.lowercase()
+        if (method != "get") return null
+
+        // Find the search input within (or near) that form
+        val input = SEARCH_INPUT_SELECTORS.firstNotNullOfOrNull { selector ->
+            form.select(selector).firstOrNull()
+        } ?: document.select(SEARCH_INPUT_SELECTORS.joinToString(",")).firstOrNull()
+            ?: return null
+
+        val inputName = input.attr("name").ifEmpty { "q" }
+        val action = form.attr("action")
+
+        // Resolve the action into an absolute-ish path relative to baseUrl
+        val actionPath = when {
+            action.isEmpty() -> "/search"
+            action.startsWith("http://") || action.startsWith("https://") -> {
+                // Absolute action URL - extract path+query from it directly
+                return try {
+                    val u = URL(action)
+                    val existingQuery = u.query
+                    val pathPart = u.path.ifEmpty { "/" }
+                    if (existingQuery.isNullOrEmpty()) {
+                        "{baseUrl}$pathPart?$inputName={query}"
+                    } else {
+                        // Preserve other static query params, append/replace the search param
+                        val params = existingQuery.split("&")
+                            .filter { !it.startsWith("$inputName=") }
+                        val rebuilt = (params + "$inputName={query}").joinToString("&")
+                        "{baseUrl}$pathPart?$rebuilt"
+                    }
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            action.startsWith("/") -> action
+            else -> "/$action"
+        }
+
+        // Also capture any other hidden/preset inputs in the form so the
+        // template preserves required static params (e.g. category=all)
+        val extraParams = form.select("input[type=hidden]")
+            .filter { it.attr("name").isNotEmpty() && it.attr("name") != inputName }
+            .joinToString("&") { "${it.attr("name")}=${it.attr("value")}" }
+
+        val queryPart = if (extraParams.isNotEmpty()) {
+            "$extraParams&$inputName={query}"
+        } else {
+            "$inputName={query}"
+        }
+
+        return "{baseUrl}$actionPath?$queryPart"
     }
     
     /**
