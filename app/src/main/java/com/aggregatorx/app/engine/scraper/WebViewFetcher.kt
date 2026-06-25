@@ -3,16 +3,15 @@ package com.aggregatorx.app.engine.scraper
 import android.content.Context
 import android.util.Log
 import android.webkit.CookieManager
-import com.github.franmontiel.persistentcookiejar.PersistentCookieJar
-import okhttp3.HttpUrl
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import com.aggregatorx.app.engine.network.PersistentCookieJar
+import okhttp3.Cookie
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-
-// Wildcard imports to resolve headless browser and custom extension helpers
-import com.aggregatorx.app.engine.*
-import com.aggregatorx.app.engine.browser.*
-import com.aggregatorx.app.util.*
-import com.aggregatorx.app.ext.*
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCancellableCoroutine
 
 class WebViewFetcher(
     private val context: Context,
@@ -27,34 +26,49 @@ class WebViewFetcher(
     }
 
     suspend fun fetch(url: String, userAgent: String): FetchResult = withContext(Dispatchers.Main) {
-        val webView = HeadlessBrowserHelper.createWebView(context, userAgent)
         try {
-            HeadlessBrowserHelper.loadUrlAndWait(webView, url)
-
-            Log.d(TAG, "WebView loading completed for $url")
-            // Extract HTML (evaluateJavascript returns a JSON-encoded string)
-            val rawResult = try {
-                JavaScriptWebViewEngine.eval(webView, "(function(){return document.documentElement.outerHTML;})()")
-            } catch (t: Throwable) {
-                null
+            val webView = WebView(context).apply {
+                settings.javaScriptEnabled = true
+                settings.userAgentString = userAgent
+                settings.domStorageEnabled = true
             }
 
-            Log.d(TAG, "evaluateJavascript returned, length=${rawResult?.length ?: 0}")
+            val html = suspendCancellableCoroutine<String?> { continuation ->
+                webView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        view?.evaluateJavascript("(function(){return document.documentElement.outerHTML;})()") { result ->
+                            continuation.resume(result)
+                        }
+                    }
+
+                    override fun onReceivedError(
+                        view: WebView?,
+                        errorCode: Int,
+                        description: String?,
+                        failingUrl: String?
+                    ) {
+                        if (continuation.isActive) {
+                            continuation.resume(null)
+                        }
+                    }
+                }
+                webView.loadUrl(url)
+            }
+
+            if (html == null) {
+                return@withContext FetchResult.Error("Failed to load page in WebView")
+            }
 
             // Parse out the JSON-encoded string formatting if present
-            val rawHtml = if (rawResult != null) {
-                if (rawResult.startsWith("\"") && rawResult.endsWith("\"") && rawResult.length >= 2) {
-                    rawResult.substring(1, rawResult.length - 1)
-                        .replace("\\\"", "\"")
-                        .replace("\\\\", "\\")
-                        .replace("\\n", "\n")
-                        .replace("\\r", "\r")
-                        .replace("\\t", "\t")
-                } else {
-                    rawResult
-                }
+            val rawHtml = if (html.startsWith("\"") && html.endsWith("\"") && html.length >= 2) {
+                html.substring(1, html.length - 1)
+                    .replace("\\\"", "\"")
+                    .replace("\\\\", "\\")
+                    .replace("\\n", "\n")
+                    .replace("\\r", "\r")
+                    .replace("\\t", "\t")
             } else {
-                null
+                html
             }
 
             // Extract cookies from CookieManager
@@ -64,23 +78,21 @@ class WebViewFetcher(
 
             if (!cookieHeader.isNullOrEmpty()) {
                 try {
-                    val parsedUrl = HttpUrl.get(url)
-                    cookieJar.importCookiesFromHeader(parsedUrl, cookieHeader)
+                    val parsedUrl = url.toHttpUrl()
+                    val cookiesList = mutableListOf<Cookie>()
+                    cookieHeader.split(";").forEach { cookieStr ->
+                        Cookie.parse(parsedUrl, cookieStr)?.let { cookiesList.add(it) }
+                    }
+                    cookieJar.saveFromResponse(parsedUrl, cookiesList)
                     Log.d(TAG, "Imported cookies into PersistentCookieJar for ${parsedUrl.host}")
                 } catch (t: Throwable) {
                     // ignore
                 }
             }
 
-            val result = FetchResult.Success(rawHtml ?: "", cookieHeader ?: "")
-            return@withContext result
+            FetchResult.Success(rawHtml, cookieHeader ?: "")
         } catch (e: Throwable) {
-            return@withContext FetchResult.Error(e.message ?: "Unknown WebView fetch error")
-        } finally {
-            try {
-                HeadlessBrowserHelper.destroyWebView(webView)
-            } catch (_: Throwable) {
-            }
+            FetchResult.Error(e.message ?: "Unknown WebView fetch error")
         }
     }
 }
