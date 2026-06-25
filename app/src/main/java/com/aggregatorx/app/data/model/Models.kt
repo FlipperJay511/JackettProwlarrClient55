@@ -95,6 +95,10 @@ data class SiteAnalysis(
     val resultContainerSelector: String? = null,
     val resultItemSelector: String? = null,
     val paginationSelector: String? = null,
+
+    // Detected search URL template, e.g. "{baseUrl}/search?q={query}".
+    // Null if no usable GET search form was found during analysis.
+    val searchUrlTemplate: String? = null,
     
     // Media Detection
     val videoPlayerType: String? = null,
