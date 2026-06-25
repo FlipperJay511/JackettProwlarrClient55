@@ -3,16 +3,12 @@ package com.aggregatorx.app.engine.scraper
 import android.content.Context
 import android.util.Log
 import okhttp3.OkHttpClient
-import com.github.franmontiel.persistentcookiejar.PersistentCookieJar
+import com.aggregatorx.app.engine.network.PersistentCookieJar
+import com.aggregatorx.app.engine.network.ProxyVPNEngine
 import kotlin.random.Random
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-
-// Wildcard imports to automatically resolve utility, proxy, or helper engines
-import com.aggregatorx.app.engine.*
-import com.aggregatorx.app.engine.proxy.*
-import com.aggregatorx.app.engine.vpn.*
 
 class EnhancedScrapingEngine(
     private val context: Context,
