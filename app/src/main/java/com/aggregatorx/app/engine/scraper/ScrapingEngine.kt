@@ -4,7 +4,7 @@ import android.content.Context
 import android.util.Log
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import com.github.franmontiel.persistentcookiejar.PersistentCookieJar
+import com.aggregatorx.app.engine.network.PersistentCookieJar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
