@@ -32,13 +32,7 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object EngineModule {
-    
-    @Provides
-    @Singleton
-    fun provideProxyVPNEngine(@ApplicationContext context: Context): ProxyVPNEngine {
-        return ProxyVPNEngine(context)
-    }
-    
+
     @Provides
     @Singleton
     fun provideCloudflareBypassEngine(): CloudflareBypassEngine {
