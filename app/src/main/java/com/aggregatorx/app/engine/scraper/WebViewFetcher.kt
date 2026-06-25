@@ -6,15 +6,19 @@ import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.aggregatorx.app.engine.network.PersistentCookieJar
+import dagger.hilt.android.qualifiers.ApplicationContext
 import okhttp3.Cookie
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlin.coroutines.resume
 
-class WebViewFetcher(
-    private val context: Context,
+@Singleton
+class WebViewFetcher @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val cookieJar: PersistentCookieJar
 ) {
 
