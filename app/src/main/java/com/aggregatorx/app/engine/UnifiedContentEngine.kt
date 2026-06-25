@@ -50,7 +50,7 @@ class UnifiedContentEngine @Inject constructor(
     /**
      * Initialize the engine and all subsystems
      */
-    suspend fun initialize(): InitializationResult = withContext(Dispatchers.IO) {
+         suspend fun initialize(): InitializationResult = withContext(Dispatchers.IO) {
         _engineState.value = EngineState.INITIALIZING
         
         try {
