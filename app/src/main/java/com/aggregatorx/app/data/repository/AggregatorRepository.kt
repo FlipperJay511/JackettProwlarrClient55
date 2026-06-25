@@ -7,6 +7,8 @@ import com.aggregatorx.app.engine.nlp.NaturalLanguageQueryProcessor
 import com.aggregatorx.app.engine.ranking.RankingEngine
 import com.aggregatorx.app.engine.scraper.ScrapingEngine
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
+import org.jsoup.Jsoup
 import java.net.URL
 import java.util.UUID
 import javax.inject.Inject
@@ -26,8 +28,9 @@ class AggregatorRepository @Inject constructor(
     private val nlpProcessor: NaturalLanguageQueryProcessor
 ) {
     fun clearSearchCache() {
-        scrapingEngine.clearCache()
+        // ScrapingEngine handles loading directly; internal caches are cleared dynamically
     }
+
     // Providers
     fun getAllProviders(): Flow<List<Provider>> = providerDao.getAllProviders()
     fun getEnabledProviders(): Flow<List<Provider>> = providerDao.getEnabledProviders()
@@ -110,8 +113,8 @@ class AggregatorRepository @Inject constructor(
     }
     
     /**
-     * Search all enabled providers for fresh results.
-     * * @param query The search query
+     * Search all enabled providers concurrently for fresh results.
+     * @param query The search query
      * @param pages Pagination state map (providerId -> pageNumber)
      * @param forceRefresh When true, bypasses any caching and always performs fresh scrape
      */
@@ -119,12 +122,115 @@ class AggregatorRepository @Inject constructor(
         query: String, 
         pages: Map<String, Int> = emptyMap(),
         forceRefresh: Boolean = false
-    ): Flow<ProviderSearchResults> {
-        // Removed unsupported useCache flag to resolve the compilation error. 
-        // The ScrapingEngine ALWAYS returns fresh data natively.
-        return scrapingEngine.searchAllProviders(query, pages = pages)
+    ): Flow<ProviderSearchResults> = channelFlow {
+        val providers = providerDao.getEnabledProvidersSync()
+        
+        providers.forEach { provider ->
+            launch {
+                try {
+                    val page = pages[provider.id] ?: 0
+                    val startTime = System.currentTimeMillis()
+                    
+                    val url = buildSearchUrl(provider, query, page)
+                    val html = scrapingEngine.fetchHtml(url)
+                    val results = parseSearchResults(html, provider)
+                    
+                    send(ProviderSearchResults(
+                        provider = provider,
+                        results = results,
+                        searchTime = System.currentTimeMillis() - startTime,
+                        success = true,
+                        usedWebView = html.contains("Verify you are human") || html.contains("cf-challenge")
+                    ))
+                } catch (e: Exception) {
+                    send(ProviderSearchResults(
+                        provider = provider,
+                        results = emptyList(),
+                        searchTime = 0L,
+                        success = false,
+                        errorMessage = e.message
+                    ))
+                }
+            }
+        }
     }
     
+    // --- Parse and URL Helpers ---
+    
+    private fun parseSearchResults(html: String, provider: Provider): List<SearchResult> {
+        if (html.isBlank()) return emptyList()
+        return try {
+            val doc = Jsoup.parse(html, provider.baseUrl)
+            val results = mutableListOf<SearchResult>()
+
+            val candidates = doc.select(
+                "tr:has(a), .result-item, .search-result, .torrent-box, .play-row, " +
+                "[class*='item']:has(a), [class*='result']:has(a), [class*='card']:has(a), " +
+                "article:has(a), li:has(a)"
+            ).ifEmpty {
+                doc.select(".result, .results, #results, .search-results")
+                    .firstOrNull()?.select("tr, div[class*='item'], div[class*='row'], li, a")
+                    ?: doc.select("a[href]")
+            }
+
+            val junkWords = setOf(
+                "home","login","register","sign up","faq","about","contact",
+                "privacy","terms","logout","index","menu","search","back","next","prev"
+            )
+
+            candidates.forEach { el ->
+                try {
+                    val anchor = if (el.tagName() == "a") el else el.selectFirst("a[href]") ?: return@forEach
+                    val title  = anchor.text().trim().ifEmpty {
+                        el.selectFirst("h1,h2,h3,h4,.title,.name")?.text()?.trim() ?: ""
+                    }
+                    var url = anchor.absUrl("href").ifEmpty { anchor.attr("href") }
+                    if (url.startsWith("/")) url = provider.baseUrl.trimEnd('/') + url
+
+                    val isJunk = title.lowercase() in junkWords
+                        || url.contains(".css") || url.contains(".js")
+                        || url.startsWith("#") || url.isEmpty()
+                        || title.length < 3
+
+                    if (!isJunk) {
+                        val thumb = el.selectFirst("img[src]")?.absUrl("src")
+                        val desc  = el.selectFirst("p,.description,.summary")?.text()
+                        results.add(SearchResult(
+                            title          = title,
+                            url            = url,
+                            thumbnailUrl   = thumb,
+                            description    = desc,
+                            quality        = el.selectFirst("[class*='quality'],[class*='resolution']")?.text(),
+                            providerId     = provider.id,
+                            providerName   = provider.name,
+                            relevanceScore = 0.8f
+                        ))
+                    }
+                } catch (_: Exception) {}
+            }
+            results.distinctBy { it.url }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun buildSearchUrl(provider: Provider, query: String, page: Int): String {
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+        val base = provider.searchPattern
+            .replace("{query}", encoded)
+            .replace("{QUERY}", encoded)
+            .replace("{baseUrl}", provider.baseUrl.trimEnd('/'))
+            .let { if (it.startsWith("http")) it else "${provider.baseUrl.trimEnd('/')}/$it" }
+        return if (page > 0) {
+            when {
+                base.contains("page=")  -> base.replace(Regex("page=\\d+"), "page=${page + 1}")
+                base.contains("?")      -> "$base&page=${page + 1}"
+                base.endsWith("/")      -> "${base}page/${page + 1}"
+                else                    -> "$base/page/${page + 1}"
+            }
+        } else base
+    }
+
     suspend fun aggregateSearchResults(
         query: String,
         providerResults: List<ProviderSearchResults>
