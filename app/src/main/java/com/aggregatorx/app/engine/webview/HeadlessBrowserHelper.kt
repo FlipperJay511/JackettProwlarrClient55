@@ -1,4 +1,4 @@
-package com.aggregatorx.app.engine.webview
+package com.aggregatorx.app.engine.scraper
 
 import android.content.Context
 import android.os.Handler
