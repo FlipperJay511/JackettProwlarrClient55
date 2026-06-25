@@ -1,15 +1,13 @@
-package com.aggregatorx.app.engine.scraper
+package com.aggregatorx.app.engine.webview
 
 import android.util.Log
 import com.aggregatorx.app.engine.util.EngineUtils
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
-import org.jsoup.nodes.Document
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
@@ -118,36 +116,52 @@ object HeadlessBrowserHelper {
             videoPatterns.forEach { pattern ->
                 pattern.findAll(html).forEach { match ->
                     val candidate = match.groupValues[1].ifEmpty { match.groupValues[0] }.trim('\'', '"')
-                    if (candidate.startsWith("http") && candidate.length > 10) found.add(candidate)
+                    if (isVideoUrl(candidate)) {
+                        found.add(normalizeUrl(candidate.replace("\\", ""), url))
+                    }
                 }
             }
-
-            // Sort: prefer HLS/DASH streams, then by quality indicator
-            found.distinct().sortedByDescending { u ->
-                when {
-                    u.contains(".m3u8") -> 100
-                    u.contains(".mpd")  -> 90
-                    u.contains("1080")  -> 80
-                    u.contains("720")   -> 70
-                    u.contains(".mp4")  -> 60
-                    else                -> 50
-                }
-            }
+            found.distinct()
         } catch (e: Exception) {
-            Log.w(TAG, "extractVideoUrls error: ${e.message}")
             emptyList()
         }
     }
 
     /**
-     * Crawls navigation tabs/categories on a site and returns content matching
-     * the query. Used for sites that have no search form.
-     *
-     * @param baseUrl  Root URL of the site
-     * @param query    Search query to match against tab content
-     * @param timeout  Timeout per request in milliseconds
-     * @return HTML of the best-matching tab page, or null
+     * Try to fetch next page intelligently
+     * Supports: Pagination links, infinite scroll, AJAX "Load More" buttons
      */
+    private fun isVideoUrl(url: String): Boolean {
+        val lower = url.lowercase()
+        return listOf(".mp4", ".m3u8", ".mpd", ".webm", ".mkv", ".ts", "/video/", "/stream/", "/hls/", "/dash/").any { lower.contains(it) }
+    }
+
+    private fun normalizeUrl(url: String, base: String): String {
+        if (url.startsWith("http")) return url
+        if (url.startsWith("//")) return "https:$url"
+        return try { java.net.URI(base).resolve(url).toString() } catch (_: Exception) { url }
+    }
+
+    private fun extractHost(url: String): String {
+        return try {
+            val uri = java.net.URI(url)
+            "${uri.scheme}://${uri.host}"
+        } catch (e: Exception) {
+            url
+        }
+    }
+
+    suspend fun fetchRaw(url: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val req = Request.Builder().url(url).header("User-Agent", EngineUtils.DEFAULT_USER_AGENT).build()
+            client.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) resp.body?.string() else null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     suspend fun fetchContentByClickingTabs(
         baseUrl: String,
         query: String,
@@ -229,11 +243,18 @@ object HeadlessBrowserHelper {
         private var _html: String = ""
         fun html(): String = _html
         internal fun setHtml(h: String) { _html = h }
-        fun navigate(url: String): NativePage = runBlocking { fetchNativePage(url) ?: this@NativePage }
+        
+        suspend fun navigate(url: String): NativePage {
+            val html = fetchRaw(url) ?: return this
+            setHtml(html)
+            return this
+        }
+
         fun content(): String = _html
         fun close() {}
         /** No-op on Android — no JS engine available. */
         fun waitForLoadState() { /* native stub */ }
+
         /**
          * Simulates JS evaluation by scanning the already-fetched HTML for
          * video URLs. Returns a List<String> of found URLs (compatible with
@@ -242,7 +263,7 @@ object HeadlessBrowserHelper {
         fun evaluate(jsCode: String): Any? {
             if (_html.isEmpty()) return null
             val videoPattern = Regex(
-                """['"]?(https?://[^'">\s]+\.(?:mp4|m3u8|mpd|webm)[^'">\s]*)['"]?""",
+                "['\"]?(https?://[^'\">\\s]+\\.(?:mp4|m3u8|mpd|webm)[^'\">\\s]*)['\"]?",
                 RegexOption.IGNORE_CASE
             )
             val urls = videoPattern.findAll(_html)
@@ -257,29 +278,17 @@ object HeadlessBrowserHelper {
     fun createAntiDetectionPage(): NativePage = NativePage()
     fun close() { cookieJar.clear() }
 
-    // ── Core Fetching ────────────────────────────────────────────────────────
-
-    suspend fun fetchRaw(url: String): String? = withContext(Dispatchers.IO) {
-        try {
-            val req = Request.Builder().url(url).header("Referer", extractHost(url) + "/").build()
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext null
-                resp.body?.string()
-            }
-        } catch (e: Exception) { Log.w(TAG, "Fetch error: ${e.message}"); null }
-    }
-
     private suspend fun fetchNativePage(url: String): NativePage? {
         val html = fetchRaw(url) ?: return null
         return NativePage(url).also { it.setHtml(html) }
     }
 
-    fun searchViaHeadlessForm(baseUrl: String, query: String): String? = runBlocking {
-        val html = fetchRaw(baseUrl) ?: return@runBlocking null
+    suspend fun searchViaHeadlessForm(baseUrl: String, query: String): String? {
+        val html = fetchRaw(baseUrl) ?: return null
         val doc = Jsoup.parse(html, baseUrl)
         val form = doc.select("form").firstOrNull { f ->
             f.select("input[type=text], input[type=search], input[name*=q]").isNotEmpty()
-        } ?: return@runBlocking html
+        } ?: return html
 
         val action = form.absUrl("action").ifEmpty { baseUrl }
         val method = form.attr("method").lowercase().ifEmpty { "get" }
@@ -295,7 +304,7 @@ object HeadlessBrowserHelper {
             }
         }
 
-        try {
+        return try {
             if (method == "post") {
                 val body = FormBody.Builder().apply { fields.forEach { add(it.key, it.value) } }.build()
                 val req = Request.Builder().url(action).post(body).header("Referer", baseUrl).build()
@@ -307,16 +316,12 @@ object HeadlessBrowserHelper {
         } catch (e: Exception) { html }
     }
 
-    private fun extractHost(url: String): String = try {
-        val uri = java.net.URI(url); "${uri.scheme}://${uri.host}"
-    } catch (_: Exception) { url }
-}
-
-private class InMemoryCookieJar : okhttp3.CookieJar {
-    private val store = mutableMapOf<String, MutableList<okhttp3.Cookie>>()
-    override fun saveFromResponse(url: okhttp3.HttpUrl, cookies: List<okhttp3.Cookie>) {
-        store.getOrPut(url.host) { mutableListOf() }.addAll(cookies)
+    private class InMemoryCookieJar : okhttp3.CookieJar {
+        private val store = mutableMapOf<String, MutableList<okhttp3.Cookie>>()
+        override fun saveFromResponse(url: okhttp3.HttpUrl, cookies: List<okhttp3.Cookie>) {
+            store.getOrPut(url.host) { mutableListOf() }.addAll(cookies)
+        }
+        override fun loadForRequest(url: okhttp3.HttpUrl): List<okhttp3.Cookie> = store[url.host] ?: emptyList()
+        fun clear() = store.clear()
     }
-    override fun loadForRequest(url: okhttp3.HttpUrl): List<okhttp3.Cookie> = store[url.host] ?: emptyList()
-    fun clear() = store.clear()
 }
