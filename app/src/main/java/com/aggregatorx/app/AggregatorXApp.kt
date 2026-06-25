@@ -13,6 +13,7 @@ import dagger.hilt.android.HiltAndroidApp
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
+@HiltAndroidApp
 class AggregatorXApp : Application(), SingletonImageLoader.Factory {
 
     override fun attachBaseContext(base: Context) {
