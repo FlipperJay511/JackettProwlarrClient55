@@ -81,11 +81,19 @@ class AggregatorRepository @Inject constructor(
         val analysis = siteAnalyzerEngine.analyzeSite(provider.url, providerId)
         siteAnalysisDao.insertAnalysis(analysis)
         
-        // Generate scraping config from analysis
+        // Generate scraping config from analysis (kept for reference/debug use)
         generateScrapingConfig(provider, analysis)
         
-        // Update provider last analyzed timestamp
-        providerDao.updateLastAnalyzed(providerId, System.currentTimeMillis())
+        // Propagate the analyzed search URL pattern + result selector directly
+        // onto the Provider entity, since that's what searchAllProviders() reads.
+        val updatedProvider = provider.copy(
+            searchPattern = analysis.searchUrlTemplate ?: provider.searchPattern,
+            searchFormSelector = analysis.searchFormSelector ?: provider.searchFormSelector,
+            resultItemSelector = analysis.resultItemSelector ?: provider.resultItemSelector,
+            requiresJavaScript = analysis.requiresJavaScript,
+            lastAnalyzed = System.currentTimeMillis()
+        )
+        providerDao.updateProvider(updatedProvider)
         
         return analysis
     }
@@ -157,20 +165,31 @@ class AggregatorRepository @Inject constructor(
     
     // --- Parse and URL Helpers ---
     
+    /**
+     * Parse search results from raw HTML. Prefers the provider's analyzed
+     * resultItemSelector (set by SiteAnalyzerEngine) when available, falling
+     * back to the generic multi-selector strategy otherwise.
+     */
     private fun parseSearchResults(html: String, provider: Provider): List<SearchResult> {
         if (html.isBlank()) return emptyList()
         return try {
             val doc = Jsoup.parse(html, provider.baseUrl)
             val results = mutableListOf<SearchResult>()
 
-            val candidates = doc.select(
-                "tr:has(a), .result-item, .search-result, .torrent-box, .play-row, " +
-                "[class*='item']:has(a), [class*='result']:has(a), [class*='card']:has(a), " +
-                "article:has(a), li:has(a)"
-            ).ifEmpty {
-                doc.select(".result, .results, #results, .search-results")
-                    .firstOrNull()?.select("tr, div[class*='item'], div[class*='row'], li, a")
-                    ?: doc.select("a[href]")
+            val analyzedSelector = provider.resultItemSelector?.takeIf { it.isNotBlank() }
+
+            val candidates = if (analyzedSelector != null && doc.select(analyzedSelector).size >= 2) {
+                doc.select(analyzedSelector)
+            } else {
+                doc.select(
+                    "tr:has(a), .result-item, .search-result, .torrent-box, .play-row, " +
+                    "[class*='item']:has(a), [class*='result']:has(a), [class*='card']:has(a), " +
+                    "article:has(a), li:has(a)"
+                ).ifEmpty {
+                    doc.select(".result, .results, #results, .search-results")
+                        .firstOrNull()?.select("tr, div[class*='item'], div[class*='row'], li, a")
+                        ?: doc.select("a[href]")
+                }
             }
 
             val junkWords = setOf(
@@ -290,6 +309,9 @@ class AggregatorRepository @Inject constructor(
     }
     
     private fun buildSearchUrlTemplate(baseUrl: String, analysis: SiteAnalysis): String {
+        // Prefer the actually-detected template from the search form, since it
+        // captures the real input name and any required static params.
+        analysis.searchUrlTemplate?.let { return it }
         return when {
             analysis.searchFormSelector != null -> "$baseUrl/search?q={query}&page={page}"
             analysis.hasAPI -> "$baseUrl/api/search?query={query}&page={page}"
