@@ -18,7 +18,12 @@ private suspend fun WebViewFetcher.fetchHtmlCompat(
     userAgent: String,
     timeoutMs: Long = 12000L
 ): String? {
-    return when (val result = this.fetch(url, userAgent)) {
+    val actualUserAgent = if (userAgent.contains("Mozilla") || userAgent.contains("Opera") || userAgent.contains("Chrome")) {
+        userAgent
+    } else {
+        "Mozilla/5.0 (Linux; Android 13; Mobile; rv:115.0) Gecko/20100101 Firefox/115.0"
+    }
+    return when (val result = this.fetch(url, actualUserAgent)) {
         is WebViewFetcher.FetchResult.Success -> result.html
         else -> null
     }
@@ -28,7 +33,7 @@ private suspend fun WebViewFetcher.fetchHtmlCompat(
  * WebView-backed provider search engine.
  *
  * Used by ScrapingEngine as the JS-site fallback when plain Jsoup returns
- * fewer than MIN_RESULTS_THRESHOLD results.  Automatically walks pages until
+ * fewer than MIN_RESULTS_THRESHOLD results. Automatically walks pages until
  * TARGET_RESULTS_PER_PROVIDER results are collected or MAX_PAGES is reached.
  */
 class WebViewProviderSearchEngine @Inject constructor(
@@ -53,17 +58,22 @@ class WebViewProviderSearchEngine @Inject constructor(
         query: String
     ): List<SearchResult> = withContext(Dispatchers.Main) {
         val allResults = mutableListOf<SearchResult>()
-        val seenUrls   = mutableSetOf<String>()
+        val seenUrls = mutableSetOf<String>()
 
         for (page in 0 until MAX_PAGES) {
             if (allResults.size >= TARGET_RESULTS_PER_PROVIDER) break
             try {
-                val url  = buildSearchUrl(provider, query, page)
+                val url = buildSearchUrl(provider, query, page)
                 val html = webViewFetcher.fetchHtmlCompat(url, query, timeoutMs = 18_000L) ?: break
-                val page_results = parseWebViewResults(html, provider)
+                val pageResults = parseWebViewResults(html, provider)
                 var added = 0
-                page_results.forEach { r -> if (seenUrls.add(r.url)) { allResults.add(r); added++ } }
-                if (added == 0) break   // no new results → end of pages
+                pageResults.forEach { r ->
+                    if (seenUrls.add(r.url)) {
+                        allResults.add(r)
+                        added++
+                    }
+                }
+                if (added == 0) break // no new results → end of pages
             } catch (e: Exception) {
                 Log.w(TAG, "Page $page failed for ${provider.name}: ${e.message}")
                 if (page == 0) break
@@ -86,13 +96,14 @@ class WebViewProviderSearchEngine @Inject constructor(
         resultSelector: String
     ): List<SearchResult> = withContext(Dispatchers.Main) {
         try {
-            val engine = JavaScriptWebViewEngine()
+            val engine = JavaScriptWebViewEngine(context)
             val html = engine.injectSearchAndWait(
+                url = provider.baseUrl,
                 searchSelector = searchInputSelector,
                 submitSelector = submitButtonSelector,
-                query          = query,
+                query = query,
                 resultSelector = resultSelector,
-                timeoutMs      = 18_000L
+                timeoutMs = 18_000L
             )
             parseWebViewResults(html, provider)
         } catch (e: Exception) {
@@ -111,11 +122,11 @@ class WebViewProviderSearchEngine @Inject constructor(
         scrollIterations: Int = 5
     ): List<SearchResult> = withContext(Dispatchers.Main) {
         try {
-            val engine = JavaScriptWebViewEngine()
-            val url    = buildSearchUrl(provider, query, 0)
+            val engine = JavaScriptWebViewEngine(context)
+            val url = buildSearchUrl(provider, query, 0)
             engine.loadUrlWithJavaScript(url, query, timeoutMs = 12_000L)
             engine.scrollToBottom(scrollIterations)
-            val html = engine.loadUrlWithJavaScript(url, timeoutMs = 5_000L)
+            val html = engine.getCurrentHtml()
             parseWebViewResults(html, provider)
         } catch (e: Exception) {
             Log.e(TAG, "Infinite scroll failed for ${provider.name}: ${e.message}")
@@ -128,7 +139,7 @@ class WebViewProviderSearchEngine @Inject constructor(
     fun parseWebViewResults(html: String, provider: Provider): List<SearchResult> {
         if (html.isBlank()) return emptyList()
         return try {
-            val doc     = Jsoup.parse(html, provider.baseUrl)
+            val doc = Jsoup.parse(html, provider.baseUrl)
             val results = mutableListOf<SearchResult>()
 
             // Ordered selector cascade — most specific first
@@ -194,10 +205,13 @@ class WebViewProviderSearchEngine @Inject constructor(
             .replace("{query}", encoded)
             .replace("{QUERY}", encoded)
             .replace("{baseUrl}", provider.baseUrl.trimEnd('/'))
-            .let { if (it.startsWith("http")) it else "${provider.baseUrl.trimEnd('/')}/$it" }
+            .let {
+                if (it.startsWith("http")) it
+                else "${provider.baseUrl.trimEnd('/')}/$it"
+            }
         return if (page > 0) {
             when {
-                base.contains("page=")  -> base.replace(Regex("page=\\d+"), "page=${page + 1}")
+                base.contains("page=") -> base.replace(Regex("page=\\d+"), "page=${page + 1}")
                 base.contains("?")      -> "$base&page=${page + 1}"
                 base.endsWith("/")      -> "${base}page/${page + 1}"
                 else                    -> "$base/page/${page + 1}"
