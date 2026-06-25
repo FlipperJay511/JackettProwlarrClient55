@@ -13,6 +13,7 @@ import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.logging.HttpLoggingInterceptor
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -74,7 +75,7 @@ class DebugTestActivity : AppCompatActivity() {
 
                 // Inspect saved cookies for the host
                 try {
-                    val httpUrl = okhttp3.HttpUrl.get(testUrl)
+                    val httpUrl = testUrl.toHttpUrl()
                     val cookies = cookieJar.loadForRequest(httpUrl)
                     Log.d(TAG, "Cookies for host ${httpUrl.host}: count=${cookies.size}")
                     for (c in cookies) {
