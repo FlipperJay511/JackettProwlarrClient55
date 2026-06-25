@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
 /**
  * HeadlessBrowserHelper — Unified Native Android scraping stack & WebView helper.
  *
- * Combines Jsoup/OkHttp scraper with Main-Thread WebView lifecycle helpers.
+ * Resides in com.aggregatorx.app.engine.webview package.
  */
 object HeadlessBrowserHelper {
 
