@@ -10,8 +10,8 @@ import okhttp3.Cookie
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCancellableCoroutine
 
 class WebViewFetcher(
     private val context: Context,
@@ -93,6 +93,11 @@ class WebViewFetcher(
             FetchResult.Success(rawHtml, cookieHeader ?: "")
         } catch (e: Throwable) {
             FetchResult.Error(e.message ?: "Unknown WebView fetch error")
+        } finally {
+            try {
+                HeadlessBrowserHelper.destroyWebView(webView)
+            } catch (_: Throwable) {
+            }
         }
     }
 }
