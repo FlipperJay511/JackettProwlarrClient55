@@ -26,8 +26,9 @@ class WebViewFetcher(
     }
 
     suspend fun fetch(url: String, userAgent: String): FetchResult = withContext(Dispatchers.Main) {
+        var webView: WebView? = null
         try {
-            val webView = WebView(context).apply {
+            webView = WebView(context).apply {
                 settings.javaScriptEnabled = true
                 settings.userAgentString = userAgent
                 settings.domStorageEnabled = true
@@ -94,9 +95,11 @@ class WebViewFetcher(
         } catch (e: Throwable) {
             FetchResult.Error(e.message ?: "Unknown WebView fetch error")
         } finally {
-            try {
-                HeadlessBrowserHelper.destroyWebView(webView)
-            } catch (_: Throwable) {
+            webView?.let {
+                try {
+                    HeadlessBrowserHelper.destroyWebView(it)
+                } catch (_: Throwable) {
+                }
             }
         }
     }
