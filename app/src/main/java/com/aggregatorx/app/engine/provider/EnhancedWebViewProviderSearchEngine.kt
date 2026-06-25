@@ -5,13 +5,25 @@ import android.util.Log
 import com.aggregatorx.app.data.model.Provider
 import com.aggregatorx.app.data.model.SearchResult
 import com.aggregatorx.app.engine.scraper.WebViewFetcher
-import com.aggregatorx.app.engine.webview.JavaScriptWebViewEngine
+import com.aggregatorx.app.engine.scraper.JavaScriptWebViewEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 import javax.inject.Inject
+
+// Compatibility extension to adapt FetchResult to expected String? and support timeoutMs
+private suspend fun WebViewFetcher.fetchHtmlCompat(
+    url: String,
+    userAgent: String,
+    timeoutMs: Long = 12000L
+): String? {
+    return when (val result = this.fetch(url, userAgent)) {
+        is WebViewFetcher.FetchResult.Success -> result.html
+        else -> null
+    }
+}
 
 /**
  * ENHANCED WebView Provider Search Engine
@@ -52,7 +64,7 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
             val baseUrl = buildSearchUrl(provider, query, 0)
             
             // Load first page
-            var html = webViewFetcher.fetch(baseUrl, query, timeoutMs = 15_000L)
+            var html = webViewFetcher.fetchHtmlCompat(baseUrl, query, timeoutMs = 15_000L)
             if (html == null) {
                 Log.w(TAG, "Initial fetch failed for ${provider.name}")
                 return@withContext emptyList()
@@ -140,7 +152,7 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
                 pageNum + 1
             )
             
-            val nextHtml = webViewFetcher.fetch(nextUrl, query, timeoutMs = 12_000L)
+            val nextHtml = webViewFetcher.fetchHtmlCompat(nextUrl, query, timeoutMs = 12_000L)
             if (nextHtml != null && nextHtml.length > 100) {
                 Log.d(TAG, "    ✓ Fetched page ${pageNum + 1} via URL")
                 return nextHtml
@@ -180,7 +192,7 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
                     if (href.isNotEmpty()) {
                         Log.d(TAG, "    Found Next: $selector → $href")
                         delay(300)
-                        val newHtml = webViewFetcher.fetch(href, "", timeoutMs = 12_000L)
+                        val newHtml = webViewFetcher.fetchHtmlCompat(href, "", timeoutMs = 12_000L)
                         if (newHtml != null) return newHtml
                     }
                 }
