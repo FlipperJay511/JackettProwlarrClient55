@@ -19,7 +19,12 @@ private suspend fun WebViewFetcher.fetchHtmlCompat(
     userAgent: String,
     timeoutMs: Long = 12000L
 ): String? {
-    return when (val result = this.fetch(url, userAgent)) {
+    val actualUserAgent = if (userAgent.contains("Mozilla") || userAgent.contains("Opera") || userAgent.contains("Chrome")) {
+        userAgent
+    } else {
+        "Mozilla/5.0 (Linux; Android 13; Mobile; rv:115.0) Gecko/20100101 Firefox/115.0"
+    }
+    return when (val result = this.fetch(url, actualUserAgent)) {
         is WebViewFetcher.FetchResult.Success -> result.html
         else -> null
     }
@@ -27,12 +32,13 @@ private suspend fun WebViewFetcher.fetchHtmlCompat(
 
 /**
  * ENHANCED WebView Provider Search Engine
- * * ✓ Multi-page auto-crawling with pagination clicking
- * ✓ Infinite scroll detection & auto-scrolling
- * ✓ JavaScript injection for custom searches
- * ✓ 40-50+ results target with smart stopping
- * ✓ Graceful fallback on all failures
- * ✓ Learns pagination patterns on each search
+ *
+ * - ✓ Multi-page auto-crawling with pagination clicking
+ * - ✓ Infinite scroll detection & auto-scrolling
+ * - ✓ JavaScript injection for custom searches
+ * - ✓ 40-50+ results target with smart stopping
+ * - ✓ Graceful fallback on all failures
+ * - ✓ Learns pagination patterns on each search
  */
 class EnhancedWebViewProviderSearchEngine @Inject constructor(
     private val context: Context,
@@ -48,8 +54,9 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
 
     /**
      * ENHANCED: Multi-page WebView crawling with auto-pagination
-     * * Automatically detects and clicks "Next" buttons, handles infinite scroll,
-     * and collects up to 50 results across multiple pages.
+     *
+     * - Automatically detects and clicks "Next" buttons, handles infinite scroll,
+     * - and collects up to 50 results across multiple pages.
      */
     suspend fun searchWithWebViewEnhanced(
         provider: Provider,
@@ -60,9 +67,9 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
         val seenUrls = mutableSetOf<String>()
 
         try {
-            val engine = JavaScriptWebViewEngine()
+            val engine = JavaScriptWebViewEngine(context)
             val baseUrl = buildSearchUrl(provider, query, 0)
-            
+
             // Load first page
             var html = webViewFetcher.fetchHtmlCompat(baseUrl, query, timeoutMs = 15_000L)
             if (html == null) {
@@ -172,7 +179,7 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
     private suspend fun tryClickNextButton(engine: JavaScriptWebViewEngine, html: String): String? {
         return try {
             val doc = Jsoup.parse(html)
-            
+
             // Try common next button selectors
             val nextSelectors = listOf(
                 "a[rel='next']",
@@ -190,14 +197,32 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
                 if (nextButton != null) {
                     val href = nextButton.absUrl("href")
                     if (href.isNotEmpty()) {
-                        Log.d(TAG, "    Found Next: $selector → $href")
+                        Log.d(TAG, "    Found Next Link: $selector → $href")
                         delay(300)
                         val newHtml = webViewFetcher.fetchHtmlCompat(href, "", timeoutMs = 12_000L)
                         if (newHtml != null) return newHtml
+                    } else {
+                        Log.d(TAG, "    Found Next Button (AJAX): $selector")
+                        val clickScript = """
+                            (function() {
+                                var btn = document.querySelector('$selector');
+                                if (btn) {
+                                    btn.click();
+                                    return true;
+                                }
+                                return false;
+                            })();
+                        """.trimIndent()
+                        val clicked = engine.eval(clickScript)
+                        if (clicked == "true") {
+                            delay(2000)
+                            return engine.getCurrentHtml()
+                        }
                     }
                 }
             }
             null
+
         } catch (e: Exception) {
             Log.w(TAG, "Next button click failed: ${e.message}")
             null
@@ -210,7 +235,7 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
     private suspend fun tryInfiniteScroll(engine: JavaScriptWebViewEngine, html: String): String? {
         return try {
             val doc = Jsoup.parse(html)
-            
+
             // Detect infinite scroll indicators
             val hasInfiniteScroll = doc.select(
                 "[class*='load'], [class*='scroll'], [class*='lazy'], " +
@@ -219,17 +244,12 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
 
             if (hasInfiniteScroll) {
                 Log.d(TAG, "    Infinite scroll detected, scrolling...")
-                
-                // Simulate scrolling
-                repeat(SCROLL_ITERATIONS) {
-                    delay(SCROLL_DELAY_MS)
-                    // Would use actual JS injection here in real implementation
-                }
-                
-                return html  // In real app, would get new HTML after JS execution
+                engine.scrollToBottom(SCROLL_ITERATIONS)
+                return engine.getCurrentHtml()
             }
             
             null
+
         } catch (e: Exception) {
             Log.w(TAG, "Infinite scroll detection failed: ${e.message}")
             null
@@ -242,7 +262,7 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
     private suspend fun tryLoadMoreButton(engine: JavaScriptWebViewEngine, html: String): String? {
         return try {
             val doc = Jsoup.parse(html)
-            
+
             val loadMoreSelectors = listOf(
                 "button[class*='load-more']",
                 "a[class*='load-more']",
@@ -255,13 +275,26 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
                 val button = doc.selectFirst(selector)
                 if (button != null) {
                     Log.d(TAG, "    Load More button found: $selector")
-                    delay(200)
-                    // In real implementation, would click and wait for AJAX response
-                    return html
+                    val clickScript = """
+                        (function() {
+                            var btn = document.querySelector('$selector');
+                            if (btn) {
+                                btn.click();
+                                return true;
+                            }
+                            return false;
+                        })();
+                    """.trimIndent()
+                    val clicked = engine.eval(clickScript)
+                    if (clicked == "true") {
+                        delay(2000)
+                        return engine.getCurrentHtml()
+                    }
                 }
             }
             
             null
+
         } catch (e: Exception) {
             Log.w(TAG, "Load More button detection failed: ${e.message}")
             null
@@ -281,9 +314,10 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
     ): List<SearchResult> = withContext(Dispatchers.Main) {
         try {
             Log.d(TAG, "💉 JS Injection search for ${provider.name}")
-            
-            val engine = JavaScriptWebViewEngine()
+
+            val engine = JavaScriptWebViewEngine(context)
             val html = engine.injectSearchAndWait(
+                url = provider.baseUrl,
                 searchSelector = searchInputSelector,
                 submitSelector = submitButtonSelector,
                 query = query,
@@ -292,6 +326,7 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
             )
             
             parseWebViewResults(html, provider)
+
         } catch (e: Exception) {
             Log.e(TAG, "JS injection failed: ${e.message}")
             emptyList()
@@ -303,7 +338,7 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
      */
     fun parseWebViewResults(html: String, provider: Provider): List<SearchResult> {
         if (html.isBlank()) return emptyList()
-        
+
         return try {
             val doc = Jsoup.parse(html, provider.baseUrl)
             val results = mutableListOf<SearchResult>()
@@ -332,7 +367,7 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
             candidates.forEach { el ->
                 try {
                     val anchor = if (el.tagName() == "a") el else el.selectFirst("a[href]") ?: return@forEach
-                    var title = anchor.text().trim().ifEmpty {
+                    val title = anchor.text().trim().ifEmpty {
                         el.selectFirst("h1,h2,h3,h4,.title,.name")?.text()?.trim() ?: ""
                     }
                     var url = anchor.absUrl("href").ifEmpty { anchor.attr("href") }
@@ -383,8 +418,11 @@ class EnhancedWebViewProviderSearchEngine @Inject constructor(
             .replace("{query}", encoded)
             .replace("{QUERY}", encoded)
             .replace("{baseUrl}", provider.baseUrl.trimEnd('/'))
-            .let { if (it.startsWith("http")) it else "${provider.baseUrl.trimEnd('/')}/$it" }
-        
+            .let {
+                if (it.startsWith("http")) it
+                else "${provider.baseUrl.trimEnd('/')}/$it"
+            }
+
         return buildPaginatedUrl(base, page)
     }
 
