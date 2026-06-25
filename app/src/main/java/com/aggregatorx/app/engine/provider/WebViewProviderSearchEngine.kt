@@ -4,15 +4,25 @@ import android.content.Context
 import android.util.Log
 import com.aggregatorx.app.data.model.Provider
 import com.aggregatorx.app.data.model.SearchResult
-import com.aggregatorx.app.engine.scraper.ScrapingEngine.Companion.MAX_PAGES
-import com.aggregatorx.app.engine.scraper.ScrapingEngine.Companion.TARGET_RESULTS_PER_PROVIDER
 import com.aggregatorx.app.engine.scraper.WebViewFetcher
-import com.aggregatorx.app.engine.webview.JavaScriptWebViewEngine
+import com.aggregatorx.app.engine.scraper.JavaScriptWebViewEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 import javax.inject.Inject
+
+// Compatibility extension to adapt FetchResult to expected String? and support timeoutMs
+private suspend fun WebViewFetcher.fetchHtmlCompat(
+    url: String,
+    userAgent: String,
+    timeoutMs: Long = 12000L
+): String? {
+    return when (val result = this.fetch(url, userAgent)) {
+        is WebViewFetcher.FetchResult.Success -> result.html
+        else -> null
+    }
+}
 
 /**
  * WebView-backed provider search engine.
@@ -28,6 +38,8 @@ class WebViewProviderSearchEngine @Inject constructor(
 
     companion object {
         private const val TAG = "WebViewProviderSearch"
+        const val MAX_PAGES = 8
+        const val TARGET_RESULTS_PER_PROVIDER = 50
     }
 
     // ── Primary entry point ───────────────────────────────────────────────────
@@ -47,7 +59,7 @@ class WebViewProviderSearchEngine @Inject constructor(
             if (allResults.size >= TARGET_RESULTS_PER_PROVIDER) break
             try {
                 val url  = buildSearchUrl(provider, query, page)
-                val html = webViewFetcher.fetch(url, query, timeoutMs = 18_000L) ?: break
+                val html = webViewFetcher.fetchHtmlCompat(url, query, timeoutMs = 18_000L) ?: break
                 val page_results = parseWebViewResults(html, provider)
                 var added = 0
                 page_results.forEach { r -> if (seenUrls.add(r.url)) { allResults.add(r); added++ } }
