@@ -4,7 +4,6 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.webkit.WebView
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -17,13 +16,16 @@ object HeadlessBrowserHelper {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    suspend fun createWebView(context: Context): WebView = withContext(Dispatchers.Main) {
+    suspend fun createWebView(context: Context, userAgent: String? = null): WebView = withContext(Dispatchers.Main) {
         val wv = WebView(context.applicationContext)
         val settings = wv.settings
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
+        if (userAgent != null) {
+            settings.userAgentString = userAgent
+        }
         wv
     }
 
@@ -37,20 +39,7 @@ object HeadlessBrowserHelper {
         }
     }
 
-    suspend fun runOnMain(block: suspend () -> Unit) {
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            block()
-        } else {
-            val d = CompletableDeferred<Unit>()
-            mainHandler.post {
-                try {
-                    block()
-                    d.complete(Unit)
-                } catch (t: Throwable) {
-                    d.completeExceptionally(t)
-                }
-            }
-            d.await()
-        }
+    suspend fun runOnMain(block: suspend () -> Unit) = withContext(Dispatchers.Main) {
+        block()
     }
 }
