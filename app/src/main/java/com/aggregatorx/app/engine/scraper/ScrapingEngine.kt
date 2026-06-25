@@ -2,14 +2,18 @@ package com.aggregatorx.app.engine.scraper
 
 import android.content.Context
 import android.util.Log
+import dagger.hilt.android.qualifiers.ApplicationContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import com.aggregatorx.app.engine.network.PersistentCookieJar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import javax.inject.Inject
+import javax.inject.Singleton
 
-class ScrapingEngine(
-    private val context: Context,
+@Singleton
+class ScrapingEngine @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val client: OkHttpClient,
     private val cookieJar: PersistentCookieJar,
     private val webViewFetcher: WebViewFetcher,
