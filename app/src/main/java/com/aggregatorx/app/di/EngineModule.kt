@@ -35,8 +35,8 @@ object EngineModule {
     
     @Provides
     @Singleton
-    fun provideProxyVPNEngine(): ProxyVPNEngine {
-        return ProxyVPNEngine()
+    fun provideProxyVPNEngine(@ApplicationContext context: Context): ProxyVPNEngine {
+        return ProxyVPNEngine(context)
     }
     
     @Provides
